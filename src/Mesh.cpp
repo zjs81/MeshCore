@@ -215,7 +215,6 @@ Packet* Mesh::createAdvert(const LocalIdentity& id, const uint8_t* app_data, siz
   }
 
   packet->header = (PAYLOAD_TYPE_ADVERT << PH_TYPE_SHIFT);  // ROUTE_TYPE_* is set later
-  packet->path_len = 0;
 
   int len = 0;
   memcpy(&packet->payload[len], id.pub_key, PUB_KEY_SIZE); len += PUB_KEY_SIZE;
@@ -253,7 +252,6 @@ Packet* Mesh::createPathReturn(const Identity& dest, const uint8_t* secret, cons
     return NULL;
   }
   packet->header = (PAYLOAD_TYPE_PATH << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
-  packet->path_len = 0;
 
   int len = 0;
   len += dest.copyHashTo(&packet->payload[len]);  // dest hash
@@ -295,7 +293,6 @@ Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* 
     return NULL;
   }
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
-  packet->path_len = 0;
 
   int len = 0;
   len += dest.copyHashTo(&packet->payload[len]);  // dest hash
@@ -320,7 +317,6 @@ Packet* Mesh::createAnonDatagram(uint8_t type, const LocalIdentity& sender, cons
     return NULL;
   }
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
-  packet->path_len = 0;
 
   int len = 0;
   if (type == PAYLOAD_TYPE_ANON_REQ) {
@@ -346,7 +342,6 @@ Packet* Mesh::createGroupDatagram(uint8_t type, const GroupChannel& channel, con
     return NULL;
   }
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
-  packet->path_len = 0;
 
   int len = 0;
   memcpy(&packet->payload[len], channel.hash, PATH_HASH_SIZE); len += PATH_HASH_SIZE;
@@ -364,7 +359,6 @@ Packet* Mesh::createAck(uint32_t ack_crc) {
     return NULL;
   }
   packet->header = (PAYLOAD_TYPE_ACK << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
-  packet->path_len = 0;
 
   memcpy(packet->payload, &ack_crc, 4);
   packet->payload_len = 4;
@@ -375,6 +369,7 @@ Packet* Mesh::createAck(uint32_t ack_crc) {
 void Mesh::sendFlood(Packet* packet, uint32_t delay_millis) {
   packet->header &= ~PH_ROUTE_MASK;
   packet->header |= ROUTE_TYPE_FLOOD;
+  packet->path_len = 0;
 
   allowPacketForward(packet);  // mark this packet as already sent in case it is rebroadcast back to us
 
