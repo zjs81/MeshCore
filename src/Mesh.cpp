@@ -70,6 +70,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
           // scan contacts DB, for all matching hashes of 'src_hash' (max 4 matches supported ATM)
           int num = searchPeersByHash(&src_hash);
           // for each matching contact, try to decrypt data
+          bool found = false;
           for (int j = 0; j < num; j++) {
             uint8_t secret[PUB_KEY_SIZE];
             getPeerSharedSecret(secret, j);
@@ -89,8 +90,12 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
               } else {
                 onPeerDataRecv(pkt, pkt->getPayloadType(), j, data, len);
               }
+              found = true;
               break;
             }
+          }
+          if (!found) {
+            MESH_DEBUG_PRINTLN("recv matches no peers, src_hash=%02X", (uint32_t)src_hash);
           }
         }
         action = routeRecvPacket(pkt);

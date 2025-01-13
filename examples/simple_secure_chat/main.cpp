@@ -53,7 +53,6 @@ struct ContactInfo {
 class MyMesh : public mesh::Mesh {
 public:
   SimpleSeenTable* _table;
-  mesh::LocalIdentity self_id;
   ContactInfo contacts[MAX_CONTACTS];
   int num_contacts;
 
@@ -128,11 +127,11 @@ protected:
       // len can be > original length, but 'text' will be padded with zeroes
       data[len] = 0; // need to make a C string again, with null terminator
 
-      Serial.printf("MSG -> from %s\n", from.name);
+      Serial.printf("(%s) MSG -> from %s\n", packet->isRouteFlood() ? "FLOOD" : "DIRECT", from.name);
       Serial.printf("   %s\n", (const char *) &data[4]);
 
       uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
-      mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, len, from.id.pub_key, PUB_KEY_SIZE);
+      mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 4 + strlen((char *)&data[4]), from.id.pub_key, PUB_KEY_SIZE);
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the ACK
@@ -190,6 +189,10 @@ protected:
       // NOTE: the same ACK can be received multiple times!
       expected_ack_crc = 0;  // reset our expected hash, now that we have received ACK
       txt_send_timeout = 0;
+    } else {
+      uint32_t crc;
+      memcpy(&crc, data, 4);
+      MESH_DEBUG_PRINTLN("  unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
     }
   }
 
@@ -209,10 +212,10 @@ public:
     uint8_t temp[4+MAX_TEXT_LEN+1];
     uint32_t timestamp = getRTCClock()->getCurrentTime();
     memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-    memcpy(&temp[4], text, text_len);
+    memcpy(&temp[4], text, text_len + 1);
 
     // calc expected ACK reply
-    mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, (const uint8_t *) temp, 4 + text_len, self_id.pub_key, PUB_KEY_SIZE);
+    mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 4 + text_len, self_id.pub_key, PUB_KEY_SIZE);
 
     return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 4 + text_len);
   }
@@ -303,11 +306,12 @@ void loop() {
         if (recipient.out_path_len < 0) {
           the_mesh.sendFlood(pkt);
           txt_send_timeout = the_mesh.futureMillis(FLOOD_SEND_TIMEOUT_MILLIS);
+          Serial.println("   (message sent - FLOOD)");
         } else {
           the_mesh.sendDirect(pkt, recipient.out_path, recipient.out_path_len);
           txt_send_timeout = the_mesh.futureMillis(DIRECT_TIMEOUT_FACTOR*recipient.out_path_len + DIRECT_TIMEOUT_BASE);
+          Serial.println("   (message sent - DIRECT)");
         }
-        Serial.println("   (message sent)");
       } else {
         Serial.println("   ERROR: unable to create packet.");
       }
