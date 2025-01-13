@@ -28,8 +28,9 @@
   #error "need to provide a 'board' object"
 #endif
 
-#define FLOOD_SEND_TIMEOUT_MILLIS   4000
-#define DIRECT_SEND_TIMEOUT_MILLIS  2000
+#define FLOOD_SEND_TIMEOUT_MILLIS   6000
+#define DIRECT_TIMEOUT_BASE         1000
+#define DIRECT_TIMEOUT_FACTOR        400   // per hop millis
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -108,6 +109,9 @@ protected:
 
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_TXT_MSG) {
+      // NOTE: this is a 'first packet wins' impl. When receiving from multiple paths, the first to arrive wins.
+      //       For flood mode, the path may not be the 'best' in terms of hops.
+      // FUTURE: could send back multiple paths, using createPathReturn(), and let sender choose which to use(?)
       if (_table->hasSeenPacket(packet)) return;
 
       int i = matching_peer_indexes[sender_idx];
@@ -124,10 +128,8 @@ protected:
       // len can be > original length, but 'text' will be padded with zeroes
       data[len] = 0; // need to make a C string again, with null terminator
 
-      Serial.print("MSG -> from ");
-      Serial.print(from.name);
-      Serial.print(": ");
-      Serial.println((const char *) &data[4]);
+      Serial.printf("MSG -> from %s\n", from.name);
+      Serial.printf("   %s\n", (const char *) &data[4]);
 
       uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
       mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, len, from.id.pub_key, PUB_KEY_SIZE);
@@ -162,6 +164,8 @@ protected:
     ContactInfo& from = contacts[i];
     Serial.printf("PATH to: %s, path_len=%d\n", from.name, (uint32_t) path_len);
 
+    // NOTE: for this impl, we just replace the current 'out_path' regardless, whenever sender sends us a new out_path.
+    // FUTURE: could store multiple out_paths per contact, and try to find which is the 'best'(?)
     memcpy(from.out_path, path, from.out_path_len = path_len);  // store a copy of path, for sendDirect()
 
     if (packet->isRouteFlood()) {
@@ -213,10 +217,10 @@ public:
     return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 4 + text_len);
   }
 
-  void sendSelfAnnounce() {
-    mesh::Packet* announce = createAdvert(self_id);
-    if (announce) {
-      sendFlood(announce);
+  void sendSelfAdvert() {
+    mesh::Packet* adv = createAdvert(self_id);
+    if (adv) {
+      sendFlood(adv);
       Serial.println("   (advert sent).");
     } else {
       Serial.println("   ERROR: unable to create packet.");
@@ -260,7 +264,7 @@ void setup() {
   the_mesh.addContact("Alice", mesh::Identity(alice_public));
 #endif
   Serial.println("Help:");
-  Serial.println("  enter 'ann' to announce presence to mesh");
+  Serial.println("  enter 'adv' to advertise presence to mesh");
   Serial.println("  enter 'send {message text}' to send a message");
 
   the_mesh.begin();
@@ -268,8 +272,8 @@ void setup() {
   command[0] = 0;
   txt_send_timeout = 0;
 
-  // send out initial Announce to the mesh
-  the_mesh.sendSelfAnnounce();
+  // send out initial Advertisement to the mesh
+  the_mesh.sendSelfAdvert();
 }
 
 void loop() {
@@ -301,14 +305,14 @@ void loop() {
           txt_send_timeout = the_mesh.futureMillis(FLOOD_SEND_TIMEOUT_MILLIS);
         } else {
           the_mesh.sendDirect(pkt, recipient.out_path, recipient.out_path_len);
-          txt_send_timeout = the_mesh.futureMillis(DIRECT_SEND_TIMEOUT_MILLIS);
+          txt_send_timeout = the_mesh.futureMillis(DIRECT_TIMEOUT_FACTOR*recipient.out_path_len + DIRECT_TIMEOUT_BASE);
         }
         Serial.println("   (message sent)");
       } else {
         Serial.println("   ERROR: unable to create packet.");
       }
-    } else if (strcmp(command, "ann") == 0) {
-      the_mesh.sendSelfAnnounce();
+    } else if (strcmp(command, "adv") == 0) {
+      the_mesh.sendSelfAdvert();
     } else if (strcmp(command, "key") == 0) {
       mesh::LocalIdentity new_id(the_mesh.getRNG());
       new_id.printTo(Serial);

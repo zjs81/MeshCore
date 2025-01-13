@@ -283,9 +283,7 @@ Packet* Mesh::createPathReturn(const Identity& dest, const uint8_t* secret, cons
 }
 
 Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len) {
-  if (type == PAYLOAD_TYPE_ANON_REQ) {
-    if (data_len + 1 + PUB_KEY_SIZE + CIPHER_BLOCK_SIZE-1 > MAX_PACKET_PAYLOAD) return NULL;
-  } else if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE) {
+  if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE) {
     if (data_len + 2 + CIPHER_BLOCK_SIZE-1 > MAX_PACKET_PAYLOAD) return NULL;
   } else {
     return NULL;  // invalid type
@@ -300,12 +298,36 @@ Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* 
   packet->path_len = 0;
 
   int len = 0;
+  len += dest.copyHashTo(&packet->payload[len]);  // dest hash
+  len += self_id.copyHashTo(&packet->payload[len]);  // src hash
+  len += Utils::encryptThenMAC(secret, &packet->payload[len], data, data_len);
+
+  packet->payload_len = len;
+
+  return packet;
+}
+
+Packet* Mesh::createAnonDatagram(uint8_t type, const LocalIdentity& sender, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len) {
+  if (type == PAYLOAD_TYPE_ANON_REQ) {
+    if (data_len + 1 + PUB_KEY_SIZE + CIPHER_BLOCK_SIZE-1 > MAX_PACKET_PAYLOAD) return NULL;
+  } else {
+    return NULL;  // invalid type
+  }
+
+  Packet* packet = obtainNewPacket();
+  if (packet == NULL) {
+    MESH_DEBUG_PRINTLN("Mesh::createAnonDatagram(): error, packet pool empty");
+    return NULL;
+  }
+  packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
+  packet->path_len = 0;
+
+  int len = 0;
   if (type == PAYLOAD_TYPE_ANON_REQ) {
     len += dest.copyHashTo(&packet->payload[len]);  // dest hash
-    memcpy(&packet->payload[len], self_id.pub_key, PUB_KEY_SIZE); len += PUB_KEY_SIZE;  // sender pub_key
+    memcpy(&packet->payload[len], sender.pub_key, PUB_KEY_SIZE); len += PUB_KEY_SIZE;  // sender pub_key
   } else {
-    len += dest.copyHashTo(&packet->payload[len]);  // dest hash
-    len += self_id.copyHashTo(&packet->payload[len]);  // src hash
+    // FUTURE:
   }
   len += Utils::encryptThenMAC(secret, &packet->payload[len], data, data_len);
 

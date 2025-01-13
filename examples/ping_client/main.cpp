@@ -95,7 +95,7 @@ public:
     if (!got_adv) return;   // have not received Advert yet
 
     uint32_t now = getRTCClock()->getCurrentTime(); // important, need timestamp in packet, so that packet_hash will be unique
-    mesh::Packet* ping = createDatagram(PAYLOAD_TYPE_ANON_REQ, server_id, server_secret, (uint8_t *) &now, sizeof(now));
+    mesh::Packet* ping = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, server_id, server_secret, (uint8_t *) &now, sizeof(now));
 
     if (ping) {
       if (server_path_len < 0) {

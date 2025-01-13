@@ -75,7 +75,7 @@ protected:
         memcpy(temp, &now, 4);
         memcpy(&temp[4], ADMIN_PASSWORD, 8);
 
-        mesh::Packet* login = createDatagram(PAYLOAD_TYPE_ANON_REQ, server_id, server_secret, temp, sizeof(temp));
+        mesh::Packet* login = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, server_id, server_secret, temp, sizeof(temp));
         if (login) sendFlood(login);  // server_path won't be known yet
       }
     }
