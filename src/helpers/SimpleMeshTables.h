@@ -1,56 +1,48 @@
 #pragma once
 
-#include <MeshTables.h>
+#include <Mesh.h>
 
 #ifdef ESP32
   #include <FS.h>
 #endif
 
-#define MAX_PACKET_HASHES  64
+#define MAX_PACKET_HASHES  128
 
 class SimpleMeshTables : public mesh::MeshTables {
-  uint8_t _fwd_hashes[MAX_PACKET_HASHES*MAX_HASH_SIZE];
-  int _next_fwd_idx;
-
-  int lookupHashIndex(const uint8_t* hash) const {
-    const uint8_t* sp = _fwd_hashes;
-    for (int i = 0; i < MAX_PACKET_HASHES; i++, sp += MAX_HASH_SIZE) {
-      if (memcmp(hash, sp, MAX_HASH_SIZE) == 0) return i;
-    }
-    return -1;
-  }
+  uint8_t _hashes[MAX_PACKET_HASHES*MAX_HASH_SIZE];
+  int _next_idx;
 
 public:
   SimpleMeshTables() { 
-    memset(_fwd_hashes, 0, sizeof(_fwd_hashes));
-    _next_fwd_idx = 0;
+    memset(_hashes, 0, sizeof(_hashes));
+    _next_idx = 0;
   }
 
 #ifdef ESP32
   void restoreFrom(File f) {
-    f.read(_fwd_hashes, sizeof(_fwd_hashes));
-    f.read((uint8_t *) &_next_fwd_idx, sizeof(_next_fwd_idx));
+    f.read(_hashes, sizeof(_hashes));
+    f.read((uint8_t *) &_next_idx, sizeof(_next_idx));
   }
   void saveTo(File f) {
-    f.write(_fwd_hashes, sizeof(_fwd_hashes));
-    f.write((const uint8_t *) &_next_fwd_idx, sizeof(_next_fwd_idx));
+    f.write(_hashes, sizeof(_hashes));
+    f.write((const uint8_t *) &_next_idx, sizeof(_next_idx));
   }
 #endif
 
-  bool hasForwarded(const uint8_t* packet_hash) const override {
-    int i = lookupHashIndex(packet_hash);
-    return i >= 0;
-  }
+  bool hasSeen(const mesh::Packet* packet) override {
+    uint8_t hash[MAX_HASH_SIZE];
+    packet->calculatePacketHash(hash);
 
-  void setHasForwarded(const uint8_t* packet_hash) override {
-    int i = lookupHashIndex(packet_hash);
-    if (i >= 0) {
-      // already in table
-    } else {
-      memcpy(&_fwd_hashes[_next_fwd_idx*MAX_HASH_SIZE], packet_hash, MAX_HASH_SIZE);
-
-      _next_fwd_idx = (_next_fwd_idx + 1) % MAX_PACKET_HASHES;  // cyclic table
+    const uint8_t* sp = _hashes;
+    for (int i = 0; i < MAX_PACKET_HASHES; i++, sp += MAX_HASH_SIZE) {
+      if (memcmp(hash, sp, MAX_HASH_SIZE) == 0) return true;
     }
+
+    memcpy(&_hashes[_next_idx*MAX_HASH_SIZE], hash, MAX_HASH_SIZE);
+    _next_idx = (_next_idx + 1) % MAX_PACKET_HASHES;  // cyclic table
+
+    return false;
   }
+
 
 };

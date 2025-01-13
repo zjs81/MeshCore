@@ -27,12 +27,21 @@ public:
 };
 
 /**
+ * An abstraction of the data tables needed to be maintained
+*/
+class MeshTables {
+public:
+  virtual bool hasSeen(const Packet* packet) = 0;
+};
+
+/**
  * \brief  The next layer in the basic Dispatcher task, Mesh recognises the particular Payload TYPES,
  *     and provides virtual methods for sub-classes on handling incoming, and also preparing outbound Packets.
 */
 class Mesh : public Dispatcher {
   RTCClock* _rtc;
   RNG* _rng;
+  MeshTables* _tables;
 
 protected:
   DispatcherAction onRecvPacket(Packet* pkt) override;
@@ -117,8 +126,8 @@ protected:
   */
   virtual void onAckRecv(Packet* packet, uint32_t ack_crc) { }
 
-  Mesh(Radio& radio, MillisecondClock& ms, RNG& rng, RTCClock& rtc, PacketManager& mgr)
-    : Dispatcher(radio, ms, mgr), _rng(&rng), _rtc(&rtc)
+  Mesh(Radio& radio, MillisecondClock& ms, RNG& rng, RTCClock& rtc, PacketManager& mgr, MeshTables& tables)
+    : Dispatcher(radio, ms, mgr), _rng(&rng), _rtc(&rtc), _tables(&tables)
   {
   }
 

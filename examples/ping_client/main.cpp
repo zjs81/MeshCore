@@ -7,7 +7,7 @@
 #include <helpers/RadioLibWrappers.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
-#include <helpers/SimpleSeenTable.h>
+#include <helpers/SimpleMeshTables.h>
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -21,7 +21,6 @@
 /* ------------------------------ Code -------------------------------- */
 
 class MyMesh : public mesh::Mesh {
-  SimpleSeenTable* _table;
   uint32_t last_advert_timestamp = 0;
   mesh::Identity server_id;
   uint8_t server_secret[PUB_KEY_SIZE];
@@ -54,8 +53,6 @@ protected:
 
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_RESPONSE) {
-      if (_table->hasSeenPacket(packet)) return;
-
       Serial.println("Received PING Reply!");
 
       if (packet->isRouteFlood()) {
@@ -67,8 +64,6 @@ protected:
   }
 
   void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
-    if (_table->hasSeenPacket(packet)) return;
-
     // must be from server_id 
     Serial.printf("PATH to server, path_len=%d\n", (uint32_t) path_len);
 
@@ -86,8 +81,8 @@ protected:
   }
 
 public:
-  MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleSeenTable& table)
-     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16)), _table(&table)
+  MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
+     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
   }
 
@@ -110,9 +105,9 @@ public:
 
 SPIClass spi;
 StdRNG fast_rng;
-SimpleSeenTable table;
+SimpleMeshTables tables;
 SX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
-MyMesh the_mesh(*new RadioLibWrapper(radio, board), fast_rng, *new VolatileRTCClock(), table);
+MyMesh the_mesh(*new RadioLibWrapper(radio, board), fast_rng, *new VolatileRTCClock(), tables);
 unsigned long nextPing;
 
 void halt() {

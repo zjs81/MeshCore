@@ -7,6 +7,7 @@
 #include <helpers/RadioLibWrappers.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
+#include <helpers/SimpleMeshTables.h>
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -56,7 +57,7 @@ protected:
 
       auto client = putClient(sender);  // add to known clients (if not already known)
       if (client == NULL || timestamp <= client->last_timestamp) {
-        return;  // FATAL: client table is full -OR- replay attack -OR- have seen this packet before
+        return;  // FATAL: client table is full -OR- replay attack 
       }
 
       client->last_timestamp = timestamp;
@@ -123,8 +124,8 @@ protected:
   }
 
 public:
-  MyMesh(mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc)
-     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(16))
+  MyMesh(mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
+     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
     num_clients = 0;
   }
@@ -132,8 +133,9 @@ public:
 
 SPIClass spi;
 StdRNG fast_rng;
+SimpleMeshTables tables;
 SX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
-MyMesh the_mesh(*new RadioLibWrapper(radio, board), *new ArduinoMillis(), fast_rng, *new VolatileRTCClock());
+MyMesh the_mesh(*new RadioLibWrapper(radio, board), *new ArduinoMillis(), fast_rng, *new VolatileRTCClock(), tables);
 
 unsigned long nextAnnounce;
 

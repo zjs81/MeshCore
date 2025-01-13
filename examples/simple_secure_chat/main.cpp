@@ -7,7 +7,7 @@
 #include <helpers/RadioLibWrappers.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
-#include <helpers/SimpleSeenTable.h>
+#include <helpers/SimpleMeshTables.h>
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
@@ -52,7 +52,6 @@ struct ContactInfo {
 
 class MyMesh : public mesh::Mesh {
 public:
-  SimpleSeenTable* _table;
   ContactInfo contacts[MAX_CONTACTS];
   int num_contacts;
 
@@ -111,7 +110,6 @@ protected:
       // NOTE: this is a 'first packet wins' impl. When receiving from multiple paths, the first to arrive wins.
       //       For flood mode, the path may not be the 'best' in terms of hops.
       // FUTURE: could send back multiple paths, using createPathReturn(), and let sender choose which to use(?)
-      if (_table->hasSeenPacket(packet)) return;
 
       int i = matching_peer_indexes[sender_idx];
       if (i < 0 && i >= num_contacts) {
@@ -152,8 +150,6 @@ protected:
   }
 
   void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
-    if (_table->hasSeenPacket(packet)) return;
-
     int i = matching_peer_indexes[sender_idx];
     if (i < 0 && i >= num_contacts) {
       MESH_DEBUG_PRINTLN("onPeerPathRecv: Invalid sender idx: %d", i);
@@ -199,8 +195,8 @@ protected:
 public:
   uint32_t expected_ack_crc;
 
-  MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleSeenTable& table)
-     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16)), _table(&table)
+  MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
+     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
     num_contacts = 0;
   }
@@ -233,9 +229,9 @@ public:
 
 SPIClass spi;
 StdRNG fast_rng;
-SimpleSeenTable table;
+SimpleMeshTables tables;
 SX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
-MyMesh the_mesh(*new RadioLibWrapper(radio, board), fast_rng, *new VolatileRTCClock(), table);
+MyMesh the_mesh(*new RadioLibWrapper(radio, board), fast_rng, *new VolatileRTCClock(), tables);
 
 void halt() {
   while (1) ;

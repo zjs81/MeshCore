@@ -36,6 +36,8 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
   if (pkt->isRouteDirect() && pkt->path_len >= PATH_HASH_SIZE) {
     if (self_id.isHashMatch(pkt->path) && allowPacketForward(pkt)) {
+      if (_tables->hasSeen(pkt)) return ACTION_RELEASE;  // don't retransmit!
+
       // remove our hash from 'path', then re-broadcast
       pkt->path_len -= PATH_HASH_SIZE;
       memcpy(pkt->path, &pkt->path[PATH_HASH_SIZE], pkt->path_len);
@@ -53,7 +55,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       memcpy(&ack_crc, &pkt->payload[i], 4); i += 4;
       if (i > pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete ACK packet");
-      } else {
+      } else if (!_tables->hasSeen(pkt)) {
         onAckRecv(pkt, ack_crc);
         action = routeRecvPacket(pkt);
       }
@@ -70,7 +72,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
       if (i + 2 >= pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete data packet");
-      } else {
+      } else if (!_tables->hasSeen(pkt)) {
         if (self_id.isHashMatch(&dest_hash)) {
           // scan contacts DB, for all matching hashes of 'src_hash' (max 4 matches supported ATM)
           int num = searchPeersByHash(&src_hash);
@@ -115,7 +117,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
       if (i + 2 >= pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete data packet");
-      } else {
+      } else if (!_tables->hasSeen(pkt)) {
         if (self_id.isHashMatch(&dest_hash)) {
           Identity sender(sender_pub_key);
 
@@ -141,7 +143,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
       if (i + 2 >= pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete data packet");
-      } else {
+      } else if (!_tables->hasSeen(pkt)) {
         // scan channels DB, for all matching hashes of 'channel_hash' (max 2 matches supported ATM)
         GroupChannel channels[2];
         int num = searchChannelsByHash(&channel_hash, channels, 2);
@@ -170,7 +172,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       if (i > pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete advertisement packet");
-      } else {
+      } else if (!_tables->hasSeen(pkt)) {
         uint8_t* app_data = &pkt->payload[i];
         int app_data_len = pkt->payload_len - i;
         if (app_data_len > MAX_ADVERT_DATA_SIZE) { app_data_len = MAX_ADVERT_DATA_SIZE; }
@@ -198,7 +200,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
     }
     default:
       MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): unknown payload type, header: %d", (int) pkt->header);
-      action = routeRecvPacket(pkt);
+      // Don't flood route unknown packet types!   action = routeRecvPacket(pkt);
       break;
   }
   return action;
@@ -382,7 +384,7 @@ void Mesh::sendFlood(Packet* packet, uint32_t delay_millis) {
   packet->header |= ROUTE_TYPE_FLOOD;
   packet->path_len = 0;
 
-  allowPacketForward(packet);  // mark this packet as already sent in case it is rebroadcast back to us
+  _tables->hasSeen(packet); // mark this packet as already sent in case it is rebroadcast back to us
 
   uint8_t pri;
   if (packet->getPayloadType() == PAYLOAD_TYPE_PATH) {
@@ -401,7 +403,7 @@ void Mesh::sendDirect(Packet* packet, const uint8_t* path, uint8_t path_len, uin
 
   memcpy(packet->path, path, packet->path_len = path_len);
 
-  allowPacketForward(packet);  // mark this packet as already sent in case it is rebroadcast back to us
+  _tables->hasSeen(packet); // mark this packet as already sent in case it is rebroadcast back to us
 
   sendPacket(packet, 0, delay_millis);
 }
@@ -412,7 +414,7 @@ void Mesh::sendZeroHop(Packet* packet, uint32_t delay_millis) {
 
   packet->path_len = 0;  // path_len of zero means Zero Hop
 
-  allowPacketForward(packet);  // mark this packet as already sent in case it is rebroadcast back to us
+  _tables->hasSeen(packet); // mark this packet as already sent in case it is rebroadcast back to us
 
   sendPacket(packet, 0, delay_millis);
 }

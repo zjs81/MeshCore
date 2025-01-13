@@ -6,7 +6,7 @@
 #include <RadioLib.h>
 #include <helpers/CustomSX1262Wrapper.h>
 #include <helpers/ArduinoHelpers.h>
-#include <helpers/SimpleSeenTable.h>
+#include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
@@ -41,7 +41,6 @@ struct RepeaterStats {
 };
 
 class MyMesh : public mesh::Mesh {
-  SimpleSeenTable* _table;
   uint32_t last_advert_timestamp = 0;
   mesh::Identity server_id;
   uint8_t server_secret[PUB_KEY_SIZE];
@@ -105,8 +104,6 @@ protected:
 
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_RESPONSE) {
-      if (_table->hasSeenPacket(packet)) return;
-
       handleResponse(data, len);
 
       if (packet->isRouteFlood()) {
@@ -118,8 +115,6 @@ protected:
   }
 
   void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
-    if (_table->hasSeenPacket(packet)) return;
-
     // must be from server_id 
     Serial.printf("PATH to repeater, path_len=%d\n", (uint32_t) path_len);
 
@@ -137,8 +132,8 @@ protected:
   }
 
 public:
-  MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleSeenTable& table)
-     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16)), _table(&table)
+  MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
+     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
   }
 
@@ -206,14 +201,14 @@ public:
 };
 
 StdRNG fast_rng;
-SimpleSeenTable table;
+SimpleMeshTables tables;
 #if defined(P_LORA_SCLK)
 SPIClass spi;
 CustomSX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
 #else
 CustomSX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY);
 #endif
-MyMesh the_mesh(*new CustomSX1262Wrapper(radio, board), fast_rng, *new VolatileRTCClock(), table);
+MyMesh the_mesh(*new CustomSX1262Wrapper(radio, board), fast_rng, *new VolatileRTCClock(), tables);
 
 void halt() {
   while (1) ;

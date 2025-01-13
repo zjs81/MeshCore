@@ -53,7 +53,6 @@ struct ClientInfo {
 
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
-  mesh::MeshTables* _tables;
   float airtime_factor;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
@@ -145,12 +144,6 @@ protected:
   }
 
   bool allowPacketForward(const mesh::Packet* packet) override {
-    uint8_t hash[MAX_HASH_SIZE];
-    packet->calculatePacketHash(hash);
-
-    if (_tables->hasForwarded(hash)) return false;  // has already been forwarded
-
-    _tables->setHasForwarded(hash);  // mark packet as forwarded
     return true;   // Yes, allow packet to be forwarded
   }
 
@@ -162,7 +155,7 @@ protected:
       if (memcmp(&data[4], ADMIN_PASSWORD, 8) == 0) {  // check for valid password
         auto client = putClient(sender);  // add to known clients (if not already known)
         if (client == NULL || timestamp <= client->last_timestamp) {
-          return;  // FATAL: client table is full -OR- replay attack -OR- have seen this packet before
+          return;  // FATAL: client table is full -OR- replay attack 
         }
 
         client->last_timestamp = timestamp;
@@ -222,7 +215,7 @@ protected:
         uint32_t timestamp;
         memcpy(&timestamp, data, 4);
 
-        if (timestamp > client->last_timestamp) {  // prevent replay attacks AND receiving via multiple paths
+        if (timestamp > client->last_timestamp) {  // prevent replay attacks 
           int reply_len = handleRequest(client, &data[4], len - 4);
           if (reply_len == 0) return;  // invalid command
 
@@ -267,7 +260,7 @@ protected:
 
 public:
   MyMesh(RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
-     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32)), _tables(&tables)
+     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     my_radio = &radio;
     airtime_factor = 5.0;   // 1/6th
