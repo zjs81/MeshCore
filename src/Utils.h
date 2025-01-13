@@ -9,6 +9,10 @@ namespace mesh {
 class RNG {
 public:
   virtual void random(uint8_t* dest, size_t sz) = 0;
+
+  /**
+   * \returns  random number between _min (inclusive) and _max (exclusive)
+   */
   uint32_t nextInt(uint32_t _min, uint32_t _max);
 };
 

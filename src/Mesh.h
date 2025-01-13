@@ -46,7 +46,12 @@ protected:
    * \brief  Check whether this packet should be forwarded (re-transmitted) or not.
    *     Is sub-classes responsibility to make sure given packet is only transmitted ONCE (by this node)
    */
-  virtual bool allowPacketForward(Packet* packet);
+  virtual bool allowPacketForward(const Packet* packet);
+
+  /**
+   * \returns  number of milliseconds delay to apply to retransmitting the given packet.
+   */
+  virtual uint32_t getRetransmitDelay(const Packet* packet);
 
   /**
    * \brief  Perform search of local DB of peers/contacts.

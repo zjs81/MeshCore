@@ -11,8 +11,13 @@ void Mesh::loop() {
   Dispatcher::loop();
 }
 
-bool Mesh::allowPacketForward(mesh::Packet* packet) { 
+bool Mesh::allowPacketForward(const mesh::Packet* packet) { 
   return false;  // by default, Transport NOT enabled
+}
+uint32_t Mesh::getRetransmitDelay(const mesh::Packet* packet) { 
+  uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * 52 / 50) / 2;
+
+  return _rng->nextInt(0, 5)*t;
 }
 
 int Mesh::searchPeersByHash(const uint8_t* hash) {
@@ -34,7 +39,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       // remove our hash from 'path', then re-broadcast
       pkt->path_len -= PATH_HASH_SIZE;
       memcpy(pkt->path, &pkt->path[PATH_HASH_SIZE], pkt->path_len);
-      return ACTION_RETRANSMIT(0);   // Routed traffic is HIGHEST priority
+      return ACTION_RETRANSMIT(0);   // Routed traffic is HIGHEST priority (and NO per-hop delay)
     }
     return ACTION_RELEASE;   // this node is NOT the next hop (OR this packet has already been forwarded), so discard.
   }
@@ -204,8 +209,9 @@ DispatcherAction Mesh::routeRecvPacket(Packet* packet) {
     // append this node's hash to 'path'
     packet->path_len += self_id.copyHashTo(&packet->path[packet->path_len]);
 
+    uint32_t d = getRetransmitDelay(packet);
     // as this propagates outwards, give it lower and lower priority
-    return ACTION_RETRANSMIT(packet->path_len);   // give priority to closer sources, than ones further away
+    return ACTION_RETRANSMIT_DELAYED(packet->path_len, d);   // give priority to closer sources, than ones further away
   }
   return ACTION_RELEASE;
 }

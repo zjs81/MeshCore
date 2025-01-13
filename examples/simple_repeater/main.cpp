@@ -144,7 +144,7 @@ protected:
     return airtime_factor;
   }
 
-  bool allowPacketForward(mesh::Packet* packet) override {
+  bool allowPacketForward(const mesh::Packet* packet) override {
     uint8_t hash[MAX_HASH_SIZE];
     packet->calculatePacketHash(hash);
 
