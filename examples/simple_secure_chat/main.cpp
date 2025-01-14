@@ -106,7 +106,7 @@ protected:
   }
 
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
-    if (type == PAYLOAD_TYPE_TXT_MSG) {
+    if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
       // NOTE: this is a 'first packet wins' impl. When receiving from multiple paths, the first to arrive wins.
       //       For flood mode, the path may not be the 'best' in terms of hops.
       // FUTURE: could send back multiple paths, using createPathReturn(), and let sender choose which to use(?)
@@ -121,15 +121,18 @@ protected:
 
       uint32_t timestamp;
       memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
+      uint flags = data[4];   // message attempt number, and other flags
 
       // len can be > original length, but 'text' will be padded with zeroes
       data[len] = 0; // need to make a C string again, with null terminator
 
+      //if ( ! alreadyReceived timestamp ) {
       Serial.printf("(%s) MSG -> from %s\n", packet->isRouteFlood() ? "FLOOD" : "DIRECT", from.name);
-      Serial.printf("   %s\n", (const char *) &data[4]);
+      Serial.printf("   %s\n", (const char *) &data[5]);
+      //}
 
       uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
-      mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 4 + strlen((char *)&data[4]), from.id.pub_key, PUB_KEY_SIZE);
+      mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 5 + strlen((char *)&data[5]), from.id.pub_key, PUB_KEY_SIZE);
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the ACK
@@ -201,19 +204,20 @@ public:
     num_contacts = 0;
   }
 
-  mesh::Packet* composeMsgPacket(ContactInfo& recipient, const char *text) {
+  mesh::Packet* composeMsgPacket(ContactInfo& recipient, uint8_t attempt, const char *text) {
     int text_len = strlen(text);
     if (text_len > MAX_TEXT_LEN) return NULL;
 
-    uint8_t temp[4+MAX_TEXT_LEN+1];
+    uint8_t temp[5+MAX_TEXT_LEN+1];
     uint32_t timestamp = getRTCClock()->getCurrentTime();
     memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-    memcpy(&temp[4], text, text_len + 1);
+    temp[4] = attempt;
+    memcpy(&temp[5], text, text_len + 1);
 
     // calc expected ACK reply
-    mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 4 + text_len, self_id.pub_key, PUB_KEY_SIZE);
+    mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
 
-    return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 4 + text_len);
+    return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
   }
 
   void sendSelfAdvert() {
@@ -297,7 +301,7 @@ void loop() {
       ContactInfo& recipient = the_mesh.contacts[0];  // just send to first contact for now
 
       const char *text = &command[5];
-      mesh::Packet* pkt = the_mesh.composeMsgPacket(recipient, text);
+      mesh::Packet* pkt = the_mesh.composeMsgPacket(recipient, 0, text);
       if (pkt) {
         if (recipient.out_path_len < 0) {
           the_mesh.sendFlood(pkt);
