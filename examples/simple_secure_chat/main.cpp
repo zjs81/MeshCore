@@ -107,10 +107,6 @@ protected:
 
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
-      // NOTE: this is a 'first packet wins' impl. When receiving from multiple paths, the first to arrive wins.
-      //       For flood mode, the path may not be the 'best' in terms of hops.
-      // FUTURE: could send back multiple paths, using createPathReturn(), and let sender choose which to use(?)
-
       int i = matching_peer_indexes[sender_idx];
       if (i < 0 && i >= num_contacts) {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: Invalid sender idx: %d", i);
