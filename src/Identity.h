@@ -64,7 +64,14 @@ public:
    * \param  secret OUT - the 'shared secret' (must be PUB_KEY_SIZE bytes)
    * \param  other IN - the second party in the exchange.
   */
-  void calcSharedSecret(uint8_t* secret, const Identity& other);
+  void calcSharedSecret(uint8_t* secret, const Identity& other) { calcSharedSecret(secret, other.pub_key); }
+
+  /**
+   * \brief  the ECDH key exhange, with Ed25519 public key transposed to Ex25519.
+   * \param  secret OUT - the 'shared secret' (must be PUB_KEY_SIZE bytes)
+   * \param  other_pub_key IN - the public key of second party in the exchange (must be PUB_KEY_SIZE bytes)
+  */
+  void calcSharedSecret(uint8_t* secret, const uint8_t* other_pub_key);
 
   bool readFrom(Stream& s);
   bool writeTo(Stream& s) const;

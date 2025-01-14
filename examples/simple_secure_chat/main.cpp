@@ -108,7 +108,7 @@ protected:
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
       int i = matching_peer_indexes[sender_idx];
-      if (i < 0 && i >= num_contacts) {
+      if (i < 0 || i >= num_contacts) {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: Invalid sender idx: %d", i);
         return;
       }
@@ -150,7 +150,7 @@ protected:
 
   void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     int i = matching_peer_indexes[sender_idx];
-    if (i < 0 && i >= num_contacts) {
+    if (i < 0 || i >= num_contacts) {
       MESH_DEBUG_PRINTLN("onPeerPathRecv: Invalid sender idx: %d", i);
       return;
     }
