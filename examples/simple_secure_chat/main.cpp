@@ -11,6 +11,19 @@
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
+#ifndef LORA_FREQ
+  #define LORA_FREQ   915.0
+#endif
+#ifndef LORA_BW
+  #define LORA_BW     125
+#endif
+#ifndef LORA_SF
+  #define LORA_SF     10
+#endif
+#ifndef LORA_CR
+  #define LORA_CR      5
+#endif
+
 //#define RUN_AS_ALICE    true
 
 #if RUN_AS_ALICE
@@ -243,13 +256,31 @@ void setup() {
   Serial.begin(115200);
 
   board.begin();
+#ifdef SX126X_DIO3_TCXO_VOLTAGE
+  float tcxo = SX126X_DIO3_TCXO_VOLTAGE;
+#else
+  float tcxo = 1.6f;
+#endif
+
+#if defined(P_LORA_SCLK)
   spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
-  int status = radio.begin(915.0, 250, 9, 5, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 22);
+  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 22, 8, tcxo);
+#else
+  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 22, 8, tcxo);
+#endif
   if (status != RADIOLIB_ERR_NONE) {
     Serial.print("ERROR: radio init failed: ");
     Serial.println(status);
     halt();
   }
+
+#ifdef SX126X_CURRENT_LIMIT
+  radio.setCurrentLimit(SX126X_CURRENT_LIMIT);
+#endif
+
+#ifdef SX126X_DIO2_AS_RF_SWITCH
+  radio.setDio2AsRfSwitch(SX126X_DIO2_AS_RF_SWITCH);
+#endif
 
   fast_rng.begin(radio.random(0x7FFFFFFF));
 
