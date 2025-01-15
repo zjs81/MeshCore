@@ -80,15 +80,17 @@ protected:
    *         NOTE: these can be received multiple times (per sender/msg-id), via different routes
    * \param  type  one of: PAYLOAD_TYPE_TXT_MSG, PAYLOAD_TYPE_REQ, PAYLOAD_TYPE_RESPONSE
    * \param  sender_idx  index of peer, [0..n) where n is what searchPeersByHash() returned
+   * \param  secret   the pre-calculated shared-secret (handy for sending response packet)
   */
-  virtual void onPeerDataRecv(Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) { }
+  virtual void onPeerDataRecv(Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) { }
 
   /**
    * \brief  A path TO peer (sender_idx) has been received. (also with optional 'extra' data encoded)
    *         NOTE: these can be received multiple times (per sender), via differen routes
    * \param  sender_idx  index of peer, [0..n) where n is what searchPeersByHash() returned
+   * \param  secret   the pre-calculated shared-secret (handy for sending response packet)
   */
-  virtual void onPeerPathRecv(Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) { }
+  virtual void onPeerPathRecv(Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) { }
 
   virtual int searchChannelsByHash(const uint8_t* hash, GroupChannel channels[], int max_matches);
 

@@ -18,7 +18,7 @@
   #define LORA_BW     125
 #endif
 #ifndef LORA_SF
-  #define LORA_SF     10
+  #define LORA_SF     9
 #endif
 #ifndef LORA_CR
   #define LORA_CR      5
@@ -119,7 +119,7 @@ protected:
     }
   }
 
-  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
+  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
       int i = matching_peer_indexes[sender_idx];
       if (i < 0 || i >= num_contacts) {
@@ -146,7 +146,7 @@ protected:
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the ACK
-        mesh::Packet* path = createPathReturn(from.id, from.shared_secret, packet->path, packet->path_len,
+        mesh::Packet* path = createPathReturn(from.id, secret, packet->path, packet->path_len,
                                               PAYLOAD_TYPE_ACK, (uint8_t *) &ack_hash, 4);
         if (path) sendFlood(path);
       } else {
@@ -162,7 +162,7 @@ protected:
     }
   }
 
-  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
+  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     int i = matching_peer_indexes[sender_idx];
     if (i < 0 || i >= num_contacts) {
       MESH_DEBUG_PRINTLN("onPeerPathRecv: Invalid sender idx: %d", i);
@@ -178,7 +178,7 @@ protected:
 
     if (packet->isRouteFlood()) {
       // send a reciprocal return path to sender, but send DIRECTLY!
-      mesh::Packet* rpath = createPathReturn(from.id, from.shared_secret, packet->path, packet->path_len, 0, NULL, 0);
+      mesh::Packet* rpath = createPathReturn(from.id, secret, packet->path, packet->path_len, 0, NULL, 0);
       if (rpath) sendDirect(rpath, path, path_len);
     }
 

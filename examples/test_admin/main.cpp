@@ -18,7 +18,7 @@
   #define LORA_BW     125
 #endif
 #ifndef LORA_SF
-  #define LORA_SF     10
+  #define LORA_SF     9
 #endif
 #ifndef LORA_CR
   #define LORA_CR      5
@@ -62,13 +62,6 @@ class MyMesh : public mesh::Mesh {
   bool got_adv = false;
 
 protected:
-  int searchPeersByHash(const uint8_t* hash) override {
-    if (got_adv && server_id.isHashMatch(hash)) {
-      return 1;
-    }
-    return 0;  // not found
-  }
-
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override {
     if (memcmp(app_data, "repeater:", 9) == 0) {
       Serial.println("Received advertisement from a repeater!");
@@ -115,19 +108,31 @@ protected:
     }
   }
 
-  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
+  int searchPeersByHash(const uint8_t* hash) override {
+    if (got_adv && server_id.isHashMatch(hash)) {
+      return 1;
+    }
+    return 0;  // not found
+  }
+
+  void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override {
+    // lookup pre-calculated shared_secret
+    memcpy(dest_secret, server_secret, PUB_KEY_SIZE);
+  }
+
+  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_RESPONSE) {
       handleResponse(data, len);
 
       if (packet->isRouteFlood()) {
         // let server know path TO here, so they can use sendDirect() for future ping responses
-        mesh::Packet* path = createPathReturn(server_id, server_secret, packet->path, packet->path_len, 0, NULL, 0);
+        mesh::Packet* path = createPathReturn(server_id, secret, packet->path, packet->path_len, 0, NULL, 0);
         if (path) sendFlood(path);
       }
     }
   }
 
-  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
+  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     // must be from server_id 
     Serial.printf("PATH to repeater, path_len=%d\n", (uint32_t) path_len);
 
@@ -135,7 +140,7 @@ protected:
 
     if (packet->isRouteFlood()) {
       // send a reciprocal return path to sender, but send DIRECTLY!
-      mesh::Packet* rpath = createPathReturn(server_id, server_secret, packet->path, packet->path_len, 0, NULL, 0);
+      mesh::Packet* rpath = createPathReturn(server_id, secret, packet->path, packet->path_len, 0, NULL, 0);
       if (rpath) sendDirect(rpath, path, path_len);
     }
 

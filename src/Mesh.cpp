@@ -97,9 +97,9 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
                 uint8_t extra_type = data[k++];
                 uint8_t* extra = &data[k];
                 uint8_t extra_len = len - k;   // remainder of packet (may be padded with zeroes!)
-                onPeerPathRecv(pkt, j, path, path_len, extra_type, extra, extra_len);
+                onPeerPathRecv(pkt, j, secret, path, path_len, extra_type, extra, extra_len);
               } else {
-                onPeerDataRecv(pkt, pkt->getPayloadType(), j, data, len);
+                onPeerDataRecv(pkt, pkt->getPayloadType(), j, secret, data, len);
               }
               found = true;
               break;
@@ -172,7 +172,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       uint32_t timestamp;
       memcpy(&timestamp, &pkt->payload[i], 4); i += 4;
-      uint8_t* signature = &pkt->payload[i]; i += SIGNATURE_SIZE;
+      const uint8_t* signature = &pkt->payload[i]; i += SIGNATURE_SIZE;
 
       if (i > pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete advertisement packet");
@@ -197,7 +197,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
           onAdvertRecv(pkt, id, timestamp, app_data, app_data_len);
           action = routeRecvPacket(pkt);
         } else {
-          MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): received advertisement with forged signature!");
+          MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): received advertisement with forged signature! (app_data_len=%d)", app_data_len);
         }
       }
       break;

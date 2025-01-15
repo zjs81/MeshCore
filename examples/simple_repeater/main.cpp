@@ -19,7 +19,7 @@
   #define LORA_BW     125
 #endif
 #ifndef LORA_SF
-  #define LORA_SF     10
+  #define LORA_SF     9
 #endif
 #ifndef LORA_CR
   #define LORA_CR      5
@@ -218,7 +218,7 @@ protected:
     }
   }
 
-  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, uint8_t* data, size_t len) override {
+  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override {
      if (type == PAYLOAD_TYPE_REQ) {  // request (from a Known admin client!)
       int i = matching_peer_indexes[sender_idx];
 
@@ -236,11 +236,11 @@ protected:
 
           if (packet->isRouteFlood()) {
             // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
-            mesh::Packet* path = createPathReturn(client->id, client->secret, packet->path, packet->path_len,
+            mesh::Packet* path = createPathReturn(client->id, secret, packet->path, packet->path_len,
                                                   PAYLOAD_TYPE_RESPONSE, reply_data, reply_len);
             if (path) sendFlood(path);
           } else {
-            mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, client->secret, reply_data, reply_len);
+            mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, reply_data, reply_len);
             if (reply) {
               if (client->out_path_len >= 0) {  // we have an out_path, so send DIRECT
                 sendDirect(reply, client->out_path, client->out_path_len);
@@ -256,7 +256,7 @@ protected:
     }
   }
 
-  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
+  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     // TODO: prevent replay attacks
     int i = matching_peer_indexes[sender_idx];
 
