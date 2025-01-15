@@ -59,6 +59,29 @@ void LocalIdentity::printTo(Stream& s) const {
   s.print("prv_key: "); Utils::printHex(s, prv_key, PRV_KEY_SIZE); s.println();
 }
 
+size_t LocalIdentity::writeTo(uint8_t* dest, size_t max_len) {
+  if (max_len < PRV_KEY_SIZE) return 0;  // not big enough
+
+  if (max_len < PRV_KEY_SIZE + PUB_KEY_SIZE) {  // only room for prv_key
+    memcpy(dest, prv_key, PRV_KEY_SIZE);
+    return PRV_KEY_SIZE;
+  }
+  memcpy(dest, prv_key, PRV_KEY_SIZE);  // otherwise can fit prv + pub keys
+  memcpy(&dest[PRV_KEY_SIZE], pub_key, PUB_KEY_SIZE);
+  return PRV_KEY_SIZE + PUB_KEY_SIZE;
+}
+
+void LocalIdentity::readFrom(const uint8_t* src, size_t len) {
+  if (len == PRV_KEY_SIZE + PUB_KEY_SIZE) {  // has prv + pub keys
+    memcpy(prv_key, src, PRV_KEY_SIZE);
+    memcpy(pub_key, &src[PRV_KEY_SIZE], PUB_KEY_SIZE);
+  } else if (len == PRV_KEY_SIZE) {
+    memcpy(prv_key, src, PRV_KEY_SIZE);
+    // now need to re-calculate the pub_key
+    ed25519_derive_pub(pub_key, prv_key);
+  }
+}
+
 void LocalIdentity::sign(uint8_t* sig, const uint8_t* message, int msg_len) const {
   ed25519_sign(sig, message, msg_len, pub_key, prv_key);
 }

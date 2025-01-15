@@ -277,6 +277,8 @@ void setup() {
     halt();
   }
 
+  radio.setCRC(0);
+
 #ifdef SX126X_CURRENT_LIMIT
   radio.setCurrentLimit(SX126X_CURRENT_LIMIT);
 #endif
