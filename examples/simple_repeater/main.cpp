@@ -304,6 +304,8 @@ void halt() {
   while (1) ;
 }
 
+static char command[80];
+
 void setup() {
   Serial.begin(115200);
   delay(5000);
@@ -346,6 +348,8 @@ void setup() {
   Serial.print("Repeater ID: ");
   mesh::Utils::printHex(Serial, the_mesh.self_id.pub_key, PUB_KEY_SIZE); Serial.println();
 
+  command[0] = 0;
+
   the_mesh.begin();
 
   // send out initial Advertisement to the mesh
@@ -353,6 +357,33 @@ void setup() {
 }
 
 void loop() {
+  int len = strlen(command);
+  while (Serial.available() && len < sizeof(command)-1) {
+    char c = Serial.read();
+    if (c != '\n') { 
+      command[len++] = c;
+      command[len] = 0;
+    }
+    Serial.print(c);
+  }
+  if (len == sizeof(command)-1) {  // command buffer full
+    command[sizeof(command)-1] = '\r';
+  }
+
+  if (len > 0 && command[len - 1] == '\r') {  // received complete line
+    command[len - 1] = 0;  // replace newline with C string null terminator
+    if (strcmp(command, "reboot") == 0) {
+      board.reboot();  // doesn't return
+    } else if (strcmp(command, "advert") == 0) {
+      the_mesh.sendSelfAdvertisement();
+    } else {
+      Serial.print("   ERROR: unknown command: "); Serial.println(command);
+      Serial.println("   (commands: reboot, advert)");
+    }
+
+    command[0] = 0;  // reset command buffer
+  }
+
   the_mesh.loop();
 
   // TODO: periodically check for OLD/inactive entries in known_clients[], and evict
