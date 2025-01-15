@@ -57,6 +57,9 @@ public:
    * \returns  true if the radio is currently mid-receive of a packet.
   */
   virtual bool isReceiving() { return false; }
+
+  virtual float getLastRSSI() const { return 0; }
+  virtual float getLastSNR() const { return 0; }
 };
 
 /**

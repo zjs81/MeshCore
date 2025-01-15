@@ -37,7 +37,7 @@ int RadioLibWrapper::recvRaw(uint8_t* bytes, int sz) {
       if (len > sz) { len = sz; }
       int err = _radio->readData(bytes, len);
       if (err != RADIOLIB_ERR_NONE) {
-        MESH_DEBUG_PRINTLN("RadioLibWrapper: error: readData()");
+        MESH_DEBUG_PRINTLN("RadioLibWrapper: error: readData(%d)", err);
       } else {
       //  Serial.print("  readData() -> "); Serial.println(len);
       }
@@ -50,7 +50,7 @@ int RadioLibWrapper::recvRaw(uint8_t* bytes, int sz) {
   if (state != STATE_RX) {
     int err = _radio->startReceive();
     if (err != RADIOLIB_ERR_NONE) {
-      MESH_DEBUG_PRINTLN("RadioLibWrapper: error: startReceive()");
+      MESH_DEBUG_PRINTLN("RadioLibWrapper: error: startReceive(%d)", err);
     }
     state = STATE_RX;
   }
@@ -66,7 +66,7 @@ void RadioLibWrapper::startSendRaw(const uint8_t* bytes, int len) {
   _board->onBeforeTransmit();
   int err = _radio->startTransmit((uint8_t *) bytes, len);
   if (err != RADIOLIB_ERR_NONE) {
-    MESH_DEBUG_PRINTLN("RadioLibWrapper: error: startTransmit()");
+    MESH_DEBUG_PRINTLN("RadioLibWrapper: error: startTransmit(%d)", err);
   }
 }
 

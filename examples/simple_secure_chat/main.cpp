@@ -41,9 +41,9 @@
   #error "need to provide a 'board' object"
 #endif
 
-#define FLOOD_SEND_TIMEOUT_MILLIS   6000
-#define DIRECT_TIMEOUT_BASE         1000
-#define DIRECT_TIMEOUT_FACTOR        400   // per hop millis
+#define FLOOD_SEND_TIMEOUT_MILLIS   8000
+#define DIRECT_TIMEOUT_BASE         1500
+#define DIRECT_TIMEOUT_FACTOR        800   // per hop millis
 
 /* -------------------------------------------------------------------------------------- */
 

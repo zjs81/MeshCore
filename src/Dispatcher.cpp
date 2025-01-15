@@ -1,5 +1,9 @@
 #include "Dispatcher.h"
 
+#if MESH_PACKET_LOGGING
+  #include <Arduino.h>
+#endif
+
 namespace mesh {
 
 void Dispatcher::begin() {
@@ -25,7 +29,6 @@ void Dispatcher::loop() {
       outbound = NULL;
     } else if (millisHasNowPassed(outbound_expiry)) {
       MESH_DEBUG_PRINTLN("Dispatcher::loop(): WARNING: outbound packed send timed out!");
-      //Serial.println("  timed out");
 
       _radio->onSendFinished();
       releasePacket(outbound);  // return to pool
@@ -62,7 +65,6 @@ void Dispatcher::checkRecv() {
           return;
         }
 #endif
-        //Serial.print("LoRa recv: len="); Serial.println(len);
 
         pkt->header = raw[i++];
         pkt->path_len = raw[i++];
@@ -83,6 +85,11 @@ void Dispatcher::checkRecv() {
     }
   }
   if (pkt) {
+    #if MESH_PACKET_LOGGING
+      Serial.printf("PACKET: recv, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d\n", 
+            2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
+            (int)_radio->getLastSNR(), (int)_radio->getLastRSSI());
+    #endif
     DispatcherAction action = onRecvPacket(pkt);
     if (action == ACTION_RELEASE) {
       _mgr->free(pkt);
@@ -126,7 +133,10 @@ void Dispatcher::checkSend() {
       _radio->startSendRaw(raw, len);
       outbound_expiry = futureMillis(max_airtime);
 
-      //Serial.print("LoRa send: len="); Serial.print(len);
+    #if MESH_PACKET_LOGGING
+      Serial.printf("PACKET: send, len=%d (type=%d, route=%s, payload_len=%d)\n", 
+            len, outbound->getPayloadType(), outbound->isRouteDirect() ? "D" : "F", outbound->payload_len);
+    #endif
     }
   }
 }
