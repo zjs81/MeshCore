@@ -41,9 +41,10 @@
   #error "need to provide a 'board' object"
 #endif
 
-#define FLOOD_SEND_TIMEOUT_MILLIS   8000
-#define DIRECT_TIMEOUT_BASE         1500
-#define DIRECT_TIMEOUT_FACTOR        800   // per hop millis
+#define SEND_TIMEOUT_BASE_MILLIS          300
+#define FLOOD_SEND_TIMEOUT_FACTOR         16.0f
+#define DIRECT_SEND_PERHOP_FACTOR         3.7213f
+#define DIRECT_SEND_PERHOP_EXTRA_MILLIS   100
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -193,19 +194,20 @@ protected:
 
   void processAck(const uint8_t *data) {
     if (memcmp(data, &expected_ack_crc, 4) == 0) {     // got an ACK from recipient
-      Serial.println("Got ACK!");
+      Serial.printf("   Got ACK! (round trip: %d millis)\n", _ms->getMillis() - last_msg_sent);
       // NOTE: the same ACK can be received multiple times!
       expected_ack_crc = 0;  // reset our expected hash, now that we have received ACK
       txt_send_timeout = 0;
     } else {
       uint32_t crc;
       memcpy(&crc, data, 4);
-      MESH_DEBUG_PRINTLN("  unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
+      MESH_DEBUG_PRINTLN(" unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
     }
   }
 
 public:
   uint32_t expected_ack_crc;
+  unsigned long last_msg_sent;
 
   MyMesh(mesh::Radio& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
      : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
@@ -225,6 +227,7 @@ public:
 
     // calc expected ACK reply
     mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
+    last_msg_sent = _ms->getMillis();
 
     return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
   }
@@ -330,14 +333,19 @@ void loop() {
       const char *text = &command[5];
       mesh::Packet* pkt = the_mesh.composeMsgPacket(recipient, 0, text);
       if (pkt) {
+        uint32_t t = radio.getTimeOnAir(pkt->payload_len + pkt->path_len + 2) / 1000;
+
         if (recipient.out_path_len < 0) {
           the_mesh.sendFlood(pkt);
-          txt_send_timeout = the_mesh.futureMillis(FLOOD_SEND_TIMEOUT_MILLIS);
-          Serial.println("   (message sent - FLOOD)");
+          txt_send_timeout = the_mesh.futureMillis(SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * t));
+          Serial.printf("   (message sent - FLOOD, t=%d)\n", t);
         } else {
           the_mesh.sendDirect(pkt, recipient.out_path, recipient.out_path_len);
-          txt_send_timeout = the_mesh.futureMillis(DIRECT_TIMEOUT_FACTOR*recipient.out_path_len + DIRECT_TIMEOUT_BASE);
-          Serial.println("   (message sent - DIRECT)");
+
+          txt_send_timeout = the_mesh.futureMillis(SEND_TIMEOUT_BASE_MILLIS + 
+                     ( (t*DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) * (recipient.out_path_len + 1)));
+
+          Serial.printf("   (message sent - DIRECT, t=%d)\n", t);
         }
       } else {
         Serial.println("   ERROR: unable to create packet.");
