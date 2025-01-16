@@ -51,9 +51,10 @@
 /* -------------------------------------------------------------------------------------- */
 
 static unsigned long txt_send_timeout;
+static int curr_contact_idx = 0;
 
-#define MAX_CONTACTS         1
-#define MAX_SEARCH_RESULTS   1
+#define MAX_CONTACTS         8
+#define MAX_SEARCH_RESULTS   2
 
 #define MAX_TEXT_LEN    (10*CIPHER_BLOCK_SIZE)  // must be LESS than (MAX_PACKET_PAYLOAD - 4 - CIPHER_MAC_SIZE - 1)
 
@@ -73,8 +74,10 @@ public:
 
   void addContact(const char* name, const mesh::Identity& id) {
     if (num_contacts < MAX_CONTACTS) {
+      curr_contact_idx = num_contacts;  // auto-select this contact as current selection
+
       contacts[num_contacts].id = id;
-      contacts[num_contacts].name = name;
+      contacts[num_contacts].name = strdup(name);
       contacts[num_contacts].last_advert_timestamp = 0;
       contacts[num_contacts].out_path_len = -1;
       // only need to calculate the shared_secret once, for better performance
@@ -96,6 +99,16 @@ protected:
     return n;
   }
 
+  #define ADV_TYPE_NONE         0   // unknown
+  #define ADV_TYPE_CHAT         1
+  #define ADV_TYPE_REPEATER     2
+  //FUTURE: 3..15
+
+  #define ADV_LATLON_MASK       0x10
+  #define ADV_BATTERY_MASK      0x20
+  #define ADV_TEMPERATURE_MASK  0x40
+  #define ADV_NAME_MASK         0x80
+
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override {
     Serial.print("Valid Advertisement -> ");
     mesh::Utils::printHex(Serial, id.pub_key, PUB_KEY_SIZE);
@@ -103,11 +116,25 @@ protected:
 
     for (int i = 0; i < num_contacts; i++) {
       ContactInfo& from = contacts[i];
-      // check for replay attacks 
-      if (id.matches(from.id) && timestamp > from.last_advert_timestamp) {  // is from one of our contacts
-        from.last_advert_timestamp = timestamp;
-        Serial.printf("   From contact: %s\n", from.name);
+      if (id.matches(from.id)) {  // is from one of our contacts
+        if (timestamp > from.last_advert_timestamp) {  // check for replay attacks!!
+          from.last_advert_timestamp = timestamp;
+          Serial.printf("   From contact: %s\n", from.name);
+        }
+        return;
       }
+    }
+    // unknown node
+    if (app_data_len > 0 && app_data[0] == (ADV_TYPE_CHAT | ADV_NAME_MASK)) {  // is it a 'Chat' node (with a name)?
+      // automatically add to our contacts
+      char name[32];
+      memcpy(name, &app_data[1], app_data_len - 1);
+      name[app_data_len - 1] = 0;  // need null terminator
+
+      addContact(name, id);
+      Serial.printf("   ADDED contact: %s\n", name);
+    } else {
+      Serial.printf("   Unknown app_data type: %02X, len=%d\n", app_data[0], app_data_len);
     }
   }
 
@@ -234,16 +261,6 @@ public:
     return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
   }
 
-  #define ADV_TYPE_NONE         0   // unknown
-  #define ADV_TYPE_CHAT         1
-  #define ADV_TYPE_REPEATER     2
-  //FUTURE: 3..15
-
-  #define ADV_LATLON_MASK       0x10
-  #define ADV_BATTERY_MASK      0x20
-  #define ADV_TEMPERATURE_MASK  0x40
-  #define ADV_NAME_MASK         0x80
-
   void sendSelfAdvert() {
     uint8_t app_data[32];
     app_data[0] = ADV_TYPE_CHAT | ADV_NAME_MASK;
@@ -347,7 +364,7 @@ void loop() {
 
     if (memcmp(command, "send ", 5) == 0) {
       // TODO: some way to select recipient??
-      ContactInfo& recipient = the_mesh.contacts[0];  // just send to first contact for now
+      ContactInfo& recipient = the_mesh.contacts[curr_contact_idx];
 
       const char *text = &command[5];
       mesh::Packet* pkt = the_mesh.composeMsgPacket(recipient, 0, text);
@@ -383,7 +400,7 @@ void loop() {
 
   if (txt_send_timeout && the_mesh.millisHasNowPassed(txt_send_timeout)) {
     // failed to get an ACK
-    ContactInfo& recipient = the_mesh.contacts[0];  // just the one contact for now
+    ContactInfo& recipient = the_mesh.contacts[curr_contact_idx];
     Serial.println("   ERROR: timed out, no ACK.");
 
     // path to our contact is now possibly broken, fallback to Flood mode
