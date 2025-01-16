@@ -16,16 +16,16 @@
   #define LORA_FREQ   915.0
 #endif
 #ifndef LORA_BW
-  #define LORA_BW     125
+  #define LORA_BW     250
 #endif
 #ifndef LORA_SF
-  #define LORA_SF     9
+  #define LORA_SF     10
 #endif
 #ifndef LORA_CR
   #define LORA_CR      5
 #endif
 
-#define  ANNOUNCE_DATA   "repeater:v1"
+#define  ANNOUNCE_NAME   "repeater1"
 
 #define  ADMIN_PASSWORD  "h^(kl@#)"
 
@@ -130,8 +130,7 @@ class MyMesh : public mesh::Mesh {
       }
       case CMD_SEND_ANNOUNCE: {
         // broadcast another self Advertisement
-        auto adv = createAdvert(self_id, (const uint8_t *)ANNOUNCE_DATA, strlen(ANNOUNCE_DATA));
-        if (adv) sendFlood(adv, 1500);   // send after slight delay
+        sendSelfAdvertisement();
 
         memcpy(&reply_data[4], "OK", 2);
         return 4 + 2;  // reply_len
@@ -276,14 +275,29 @@ public:
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     my_radio = &radio;
-    airtime_factor = 5.0;   // 1/6th
+    airtime_factor = 0.0;  // 5.0;   // 1/6th
     num_clients = 0;
   }
 
+  #define ADV_TYPE_NONE         0   // unknown
+  #define ADV_TYPE_CHAT         1
+  #define ADV_TYPE_REPEATER     2
+  //FUTURE: 3..15
+
+  #define ADV_LATLON_MASK       0x10
+  #define ADV_BATTERY_MASK      0x20
+  #define ADV_TEMPERATURE_MASK  0x40
+  #define ADV_NAME_MASK         0x80
+
   void sendSelfAdvertisement() {
-    mesh::Packet* pkt = createAdvert(self_id, (const uint8_t *)ANNOUNCE_DATA, strlen(ANNOUNCE_DATA));
+    uint8_t app_data[32];
+    app_data[0] = ADV_TYPE_REPEATER | ADV_NAME_MASK;
+    strcpy((char *)&app_data[1], ANNOUNCE_NAME);
+    int app_data_len = 1 + strlen(ANNOUNCE_NAME);
+ 
+    mesh::Packet* pkt = createAdvert(self_id, app_data, app_data_len);
     if (pkt) {
-      sendFlood(pkt);
+      sendFlood(pkt, 800);  // add slight delay
     } else {
       MESH_DEBUG_PRINTLN("ERROR: unable to create advertisement packet!");
     }

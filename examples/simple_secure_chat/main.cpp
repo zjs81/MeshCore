@@ -15,10 +15,10 @@
   #define LORA_FREQ   915.0
 #endif
 #ifndef LORA_BW
-  #define LORA_BW     125
+  #define LORA_BW     250
 #endif
 #ifndef LORA_SF
-  #define LORA_SF     9
+  #define LORA_SF     10
 #endif
 #ifndef LORA_CR
   #define LORA_CR      5
@@ -27,8 +27,10 @@
 //#define RUN_AS_ALICE    true
 
 #if RUN_AS_ALICE
+  #define  USER_NAME  "Alice"
   const char* alice_private = "B8830658388B2DDF22C3A508F4386975970CDE1E2A2A495C8F3B5727957A97629255A1392F8BA4C26A023A0DAB78BFC64D261C8E51507496DD39AFE3707E7B42";
 #else
+  #define  USER_NAME  "Bob"
   const char *bob_private = "30BAA23CCB825D8020A59C936D0AB7773B07356020360FC77192813640BAD375E43BBF9A9A7537E4B9614610F1F2EF874AAB390BA9B0C2F01006B01FDDFEFF0C";
 #endif
   const char *alice_public = "106A5136EC0DD797650AD204C065CF9B66095F6ED772B0822187785D65E11B1F";
@@ -232,10 +234,25 @@ public:
     return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
   }
 
+  #define ADV_TYPE_NONE         0   // unknown
+  #define ADV_TYPE_CHAT         1
+  #define ADV_TYPE_REPEATER     2
+  //FUTURE: 3..15
+
+  #define ADV_LATLON_MASK       0x10
+  #define ADV_BATTERY_MASK      0x20
+  #define ADV_TEMPERATURE_MASK  0x40
+  #define ADV_NAME_MASK         0x80
+
   void sendSelfAdvert() {
-    mesh::Packet* adv = createAdvert(self_id);
+    uint8_t app_data[32];
+    app_data[0] = ADV_TYPE_CHAT | ADV_NAME_MASK;
+    strcpy((char *)&app_data[1], USER_NAME);
+    int app_data_len = 1 + strlen(USER_NAME);
+ 
+    mesh::Packet* adv = createAdvert(self_id, app_data, app_data_len);
     if (adv) {
-      sendFlood(adv);
+      sendFlood(adv, 800);  // add slight delay
       Serial.println("   (advert sent).");
     } else {
       Serial.println("   ERROR: unable to create packet.");
