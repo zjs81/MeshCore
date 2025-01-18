@@ -28,9 +28,13 @@
   #defne LORA_TX_POWER  20
 #endif
 
-#define  ANNOUNCE_NAME   "repeater1"
+#ifndef REPEATER_NAME
+  #define  REPEATER_NAME   "repeater"
+#endif
 
-#define  ADMIN_PASSWORD  "h^(kl@#)"
+#ifndef ADMIN_PASSWORD
+  #define  ADMIN_PASSWORD  "h^(kl@#)"
+#endif
 
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
@@ -300,8 +304,8 @@ public:
   void sendSelfAdvertisement() {
     uint8_t app_data[32];
     app_data[0] = ADV_TYPE_REPEATER | ADV_NAME_MASK;
-    strcpy((char *)&app_data[1], ANNOUNCE_NAME);
-    int app_data_len = 1 + strlen(ANNOUNCE_NAME);
+    strcpy((char *)&app_data[1], REPEATER_NAME);
+    int app_data_len = 1 + strlen(REPEATER_NAME);
  
     mesh::Packet* pkt = createAdvert(self_id, app_data, app_data_len);
     if (pkt) {
