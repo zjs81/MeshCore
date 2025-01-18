@@ -64,6 +64,9 @@ struct RepeaterStats {
   uint32_t n_packets_sent;
   uint32_t total_air_time_secs;
   uint32_t total_up_time_secs;
+  uint32_t n_sent_flood, n_sent_direct;
+  uint32_t n_recv_flood, n_recv_direct;
+  uint32_t n_full_events;
 };
 
 struct ClientInfo {
@@ -120,6 +123,11 @@ class MyMesh : public mesh::Mesh {
         stats.n_packets_sent = my_radio->getPacketsSent();
         stats.total_air_time_secs = getTotalAirTime() / 1000;
         stats.total_up_time_secs = _ms->getMillis() / 1000;
+        stats.n_sent_flood = getNumSentFlood();
+        stats.n_sent_direct = getNumSentDirect();
+        stats.n_recv_flood = getNumRecvFlood();
+        stats.n_recv_direct = getNumRecvDirect();
+        stats.n_full_events = getNumFullEvents();
 
         memcpy(&reply_data[4], &stats, sizeof(stats));
 

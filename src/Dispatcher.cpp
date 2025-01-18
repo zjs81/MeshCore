@@ -7,6 +7,10 @@
 namespace mesh {
 
 void Dispatcher::begin() {
+  n_sent_flood = n_sent_direct = 0;
+  n_recv_flood = n_recv_direct = 0;
+  n_full_events = 0;
+
   _radio->begin();
 }
 
@@ -26,6 +30,11 @@ void Dispatcher::loop() {
 
       _radio->onSendFinished();
       onPacketSent(outbound);
+      if (outbound->isRouteFlood()) {
+        n_sent_flood++;
+      } else {
+        n_sent_direct++;
+      }
       outbound = NULL;
     } else if (millisHasNowPassed(outbound_expiry)) {
       MESH_DEBUG_PRINTLN("Dispatcher::loop(): WARNING: outbound packed send timed out!");
@@ -85,6 +94,11 @@ void Dispatcher::checkRecv() {
     }
   }
   if (pkt) {
+    if (pkt->isRouteFlood()) {
+      n_recv_flood++;
+    } else {
+      n_recv_direct++;
+    }
     #if MESH_PACKET_LOGGING
       Serial.printf("PACKET: recv, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d\n", 
             2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
@@ -142,7 +156,10 @@ void Dispatcher::checkSend() {
 }
 
 Packet* Dispatcher::obtainNewPacket() {
-  return _mgr->allocNew();  // TODO: zero out all fields
+  auto pkt = _mgr->allocNew();  // TODO: zero out all fields
+  if (pkt == NULL) n_full_events++;
+
+  return pkt;
 }
 
 void Dispatcher::releasePacket(Packet* packet) {

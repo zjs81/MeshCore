@@ -94,6 +94,9 @@ class Dispatcher {
   Packet* outbound;  // current outbound packet
   unsigned long outbound_expiry, outbound_start, total_air_time;
   unsigned long next_tx_time;
+  uint32_t n_sent_flood, n_sent_direct;
+  uint32_t n_recv_flood, n_recv_direct;
+  uint32_t n_full_events;
 
 protected:
   PacketManager* _mgr;
@@ -119,6 +122,11 @@ public:
   void sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis=0);
 
   unsigned long getTotalAirTime() const { return total_air_time; }  // in milliseconds
+  uint32_t getNumSentFlood() const { return n_sent_flood; }
+  uint32_t getNumSentDirect() const { return n_sent_direct; }
+  uint32_t getNumRecvFlood() const { return n_recv_flood; }
+  uint32_t getNumRecvDirect() const { return n_recv_direct; }
+  uint32_t getNumFullEvents() const { return n_full_events; }
 
   // helper methods
   bool millisHasNowPassed(unsigned long timestamp) const;

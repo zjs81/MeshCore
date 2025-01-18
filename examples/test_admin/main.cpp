@@ -51,6 +51,9 @@ struct RepeaterStats {
   uint32_t n_packets_sent;
   uint32_t total_air_time_secs;
   uint32_t total_up_time_secs;
+  uint32_t n_sent_flood, n_sent_direct;
+  uint32_t n_recv_flood, n_recv_direct;
+  uint32_t n_full_events;
 };
 
 class MyMesh : public mesh::Mesh {
