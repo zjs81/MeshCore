@@ -24,6 +24,9 @@
 #ifndef LORA_CR
   #define LORA_CR      5
 #endif
+#ifndef LORA_TX_POWER
+  #defne LORA_TX_POWER  20
+#endif
 
 #define  ANNOUNCE_NAME   "repeater1"
 
@@ -32,6 +35,11 @@
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
   static HeltecV3Board board;
+#elif defined(ARDUINO_XIAO_ESP32C3)
+  #include <helpers/XiaoC3Board.h>
+  #include <helpers/CustomSX1262Wrapper.h>
+  #include <helpers/CustomSX1268Wrapper.h>
+  static XiaoC3Board board;
 #else
   #error "need to provide a 'board' object"
 #endif
@@ -306,13 +314,13 @@ public:
 
 #if defined(P_LORA_SCLK)
 SPIClass spi;
-CustomSX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
+RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
 #else
-CustomSX1262 radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY);
+RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY);
 #endif
 StdRNG fast_rng;
 SimpleMeshTables tables;
-MyMesh the_mesh(*new CustomSX1262Wrapper(radio, board), *new ArduinoMillis(), fast_rng, *new VolatileRTCClock(), tables);
+MyMesh the_mesh(*new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, *new VolatileRTCClock(), tables);
 
 void halt() {
   while (1) ;
@@ -334,9 +342,9 @@ void setup() {
 
 #if defined(P_LORA_SCLK)
   spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
-  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 22, 8, tcxo);
+  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 8, tcxo);
 #else
-  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 22, 8, tcxo);
+  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 8, tcxo);
 #endif
   if (status != RADIOLIB_ERR_NONE) {
     Serial.print("ERROR: radio init failed: ");

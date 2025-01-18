@@ -92,8 +92,6 @@ protected:
   */
   virtual void onPeerPathRecv(Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) { }
 
-  virtual int searchChannelsByHash(const uint8_t* hash, GroupChannel channels[], int max_matches);
-
   /**
    * \brief  A new incoming Advertisement has been received.
    *         NOTE: these can be received multiple times (per id/timestamp), via different routes
@@ -113,6 +111,13 @@ protected:
    *         NOTE: these can be received multiple times (per sender), via differen routes
   */
   virtual void onPathRecv(Packet* packet, Identity& sender, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) { }
+
+  /**
+   * \brief  Perform search of local DB of matching GroupChannels.
+   * \param  channels  OUT - store matching channels in this array, up to max_matches
+   * \returns  Number of channels with matching hash
+   */
+  virtual int searchChannelsByHash(const uint8_t* hash, GroupChannel channels[], int max_matches);
 
   /**
    * \brief  An encrypted group data packet has been received.
