@@ -28,8 +28,14 @@
   #defne LORA_TX_POWER  20
 #endif
 
-#ifndef REPEATER_NAME
-  #define  REPEATER_NAME   "repeater"
+#ifndef ADVERT_NAME
+  #define  ADVERT_NAME   "repeater"
+#endif
+#ifndef ADVERT_LAT
+  #define  ADVERT_LAT  0.0
+#endif
+#ifndef ADVERT_LON
+  #define  ADVERT_LON  0.0
 #endif
 
 #ifndef ADMIN_PASSWORD
@@ -310,10 +316,22 @@ public:
   #define ADV_NAME_MASK         0x80
 
   void sendSelfAdvertisement() {
-    uint8_t app_data[32];
+    uint8_t app_data[MAX_ADVERT_DATA_SIZE+32];
     app_data[0] = ADV_TYPE_REPEATER | ADV_NAME_MASK;
-    strcpy((char *)&app_data[1], REPEATER_NAME);
-    int app_data_len = 1 + strlen(REPEATER_NAME);
+    int i = 1;
+    int32_t lat = ADVERT_LAT * 1E6;
+    int32_t lon = ADVERT_LON * 1E6;
+    if (!(lat == 0 && lon == 0)) {
+      app_data[0] |= ADV_LATLON_MASK;
+      memcpy(&app_data[i], &lat, 4); i += 4;
+      memcpy(&app_data[i], &lon, 4); i += 4;
+    }
+    strcpy((char *)&app_data[i], ADVERT_NAME);
+    int app_data_len = i + strlen(ADVERT_NAME);
+    if (app_data_len > MAX_ADVERT_DATA_SIZE) {
+      app_data_len = MAX_ADVERT_DATA_SIZE;
+      app_data[MAX_ADVERT_DATA_SIZE - 1] = 0;  // truncate the ADVERT_NAME
+    }
  
     mesh::Packet* pkt = createAdvert(self_id, app_data, app_data_len);
     if (pkt) {
