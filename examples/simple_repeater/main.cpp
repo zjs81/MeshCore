@@ -197,9 +197,11 @@ protected:
       if (memcmp(&data[4], ADMIN_PASSWORD, 8) == 0) {  // check for valid password
         auto client = putClient(sender);  // add to known clients (if not already known)
         if (client == NULL || timestamp <= client->last_timestamp) {
+          MESH_DEBUG_PRINTLN("Client table full, or replay attack!");
           return;  // FATAL: client table is full -OR- replay attack 
         }
 
+        MESH_DEBUG_PRINTLN("Login success!");
         client->last_timestamp = timestamp;
 
         uint32_t now = getRTCClock()->getCurrentTime();
@@ -221,6 +223,9 @@ protected:
             }
           }
         }
+      } else {
+        data[4+8] = 0;  // ensure null terminator
+        MESH_DEBUG_PRINTLN("Incorrect password: %s", &data[4]);
       }
     }
   }
@@ -290,7 +295,7 @@ protected:
     int i = matching_peer_indexes[sender_idx];
 
     if (i >= 0 && i < num_clients) {  // get from our known_clients table (sender SHOULD already be known in this context)
-      Serial.printf("PATH to client, path_len=%d\n", (uint32_t) path_len);
+      MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t) path_len);
       auto client = &known_clients[i];
       memcpy(client->out_path, path, client->out_path_len = path_len);  // store a copy of path, for sendDirect()
     } else {
@@ -364,7 +369,7 @@ static char command[80];
 
 void setup() {
   Serial.begin(115200);
-  delay(5000);
+  delay(1000);
 
   board.begin();
 
