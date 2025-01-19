@@ -1,8 +1,6 @@
-## About RippleCore
+## About MeshCore
 
-RippleCore is a portable C++ library which provides classes for adding multi-hop packet routing to embedded projects typically employing packet radios like LoRa.
-
-It is commercially known as the 'R2' protocol, and is the successor LoRa routing engine to the ['Ripple' project](https://buymeacoffee.com/ripplebiz).
+MeshCore is a portable C++ library which provides classes for adding multi-hop packet routing to embedded projects typically employing packet radios like LoRa.
 
 At present it is mostly aimed at Arduino projects, using the [PlatformIO](https://docs.platformio.org) tools, but could potentially be integrated into other environments.
 
@@ -24,7 +22,7 @@ There is also a **'simple_repeater'** example, which should function as a basic 
 
 Will hopefully figure out how to make this a registered PlatformIO library, so it can just be added in **lib_deps** in your own project.
 
-## Acknowledgments
+## More Resources
 
-This project is insipired from/by the [Reticulum project, by Mark Qvist](https://reticulum.network/start.html). I recommend having a look at RNS (Reticulum Network Stack) and study, almost as a pre-requisite to this project.
+You will be able to find additional guides and components at [my site](https://buymeacoffee.com/ripplebiz), or [join Andy Kirby's Discord] (https://discord.gg/GBxVx2JMAy) for discussions.
 
