@@ -12,10 +12,8 @@
 #include <driver/uart.h>
 
 class XiaoC3Board : public ESP32Board {
-  uint8_t startup_reason;
 public:
   void begin() {
-    startup_reason = BD_STARTUP_NORMAL;
     ESP32Board::begin();
 
     esp_reset_reason_t reason = esp_reset_reason();
@@ -46,8 +44,6 @@ public:
     digitalWrite(P_LORA_TX_LED, LOW);
   #endif
   }
-
-  uint8_t getStartupReason() const { return startup_reason; }
 
   void enterDeepSleep(uint32_t secs, int8_t wake_pin = -1) {
     gpio_set_direction(gpio_num_t(P_LORA_DIO_1), GPIO_MODE_INPUT);
@@ -111,7 +107,7 @@ public:
 
     return ((5.78 * raw) / 1024.0) * 1000;
   #else
-    return 0;
+    return 0;  // not supported
   #endif
   }
 

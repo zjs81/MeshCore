@@ -8,10 +8,24 @@
 #include <rom/rtc.h>
 #include <sys/time.h>
 
-class ESP32Board : public mesh::MainBoard {  // abstract class
+class ESP32Board : public mesh::MainBoard {
+protected:
+  uint8_t startup_reason;
+
 public:
   void begin() {
     // for future use, sub-classes SHOULD call this from their begin()
+    startup_reason = BD_STARTUP_NORMAL;
+  }
+
+  uint8_t getStartupReason() const override { return startup_reason; }
+
+  uint16_t getBattMilliVolts() override {
+    return 0;  // not supported
+  }
+
+  const char* getManufacturerName() const override {
+    return "Generic ESP32";
   }
 
   void reboot() override {

@@ -22,10 +22,8 @@
 #include <driver/rtc_io.h>
 
 class HeltecV3Board : public ESP32Board {
-  uint8_t startup_reason;
 public:
   void begin() {
-    startup_reason = BD_STARTUP_NORMAL;
     ESP32Board::begin();
 
     esp_reset_reason_t reason = esp_reset_reason();
@@ -45,8 +43,6 @@ public:
     analogReadResolution(10);
     pinMode(PIN_ADC_CTRL, OUTPUT);
   }
-
-  uint8_t getStartupReason() const { return startup_reason; }
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn = -1) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);

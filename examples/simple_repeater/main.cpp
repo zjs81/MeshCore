@@ -50,6 +50,10 @@
   #include <helpers/CustomSX1262Wrapper.h>
   #include <helpers/CustomSX1268Wrapper.h>
   static XiaoC3Board board;
+#elif defined(SEEED_XIAO_S3)
+  #include <helpers/ESP32Board.h>
+  #include <helpers/CustomSX1262Wrapper.h>
+  static ESP32Board board;
 #else
   #error "need to provide a 'board' object"
 #endif
@@ -377,6 +381,7 @@ void setup() {
   int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 8, tcxo);
 #endif
   if (status != RADIOLIB_ERR_NONE) {
+    delay(5000);
     Serial.print("ERROR: radio init failed: ");
     Serial.println(status);
     halt();
