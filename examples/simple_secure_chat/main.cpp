@@ -45,7 +45,7 @@
 
 #define SEND_TIMEOUT_BASE_MILLIS          300
 #define FLOOD_SEND_TIMEOUT_FACTOR         16.0f
-#define DIRECT_SEND_PERHOP_FACTOR         3.7213f
+#define DIRECT_SEND_PERHOP_FACTOR         4.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS   100
 
 /* -------------------------------------------------------------------------------------- */

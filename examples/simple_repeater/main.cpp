@@ -310,7 +310,7 @@ public:
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     my_radio = &radio;
-    airtime_factor = 0.0;  // 5.0;   // 1/6th
+    airtime_factor = 1.0;    // one half
     num_clients = 0;
   }
 

@@ -15,7 +15,7 @@ void Dispatcher::begin() {
 }
 
 float Dispatcher::getAirtimeBudgetFactor() const {
-  return 5.0;   // default, 16.6%  (1/6th)
+  return 2.0;   // default, 33.3%  (1/3rd)
 }
 
 void Dispatcher::loop() {
