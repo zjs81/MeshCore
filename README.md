@@ -18,11 +18,16 @@ There is also a pair of examples, **'ping_client'** and **'ping_server'** which 
 
 There is also a **'simple_repeater'** example, which should function as a basic repeater to ALL of the various samples, like the chat ones. It also defines a few examples of some 'remote admin', like setting the clock. The **'test_admin'** example is an example of an app that remotely monitors and sends commands to the 'simple_repeater' nodes.
 
+## RAK Wireless Board Support in PlatformIO
+
+Before building/flashing the RAK4631 targets in this project, there is, unfortunately, some patching you have to do to your platformIO packages to make it work. There is a guide here on the process:
+   https://learn.rakwireless.com/hc/en-us/articles/26687276346775-How-To-Perform-Installation-of-Board-Support-Package-in-PlatformIO
+   
 ## To-Do's
 
 Will hopefully figure out how to make this a registered PlatformIO library, so it can just be added in **lib_deps** in your own project.
 
 ## More Resources
 
-You will be able to find additional guides and components at [my site](https://buymeacoffee.com/ripplebiz), or [join Andy Kirby's Discord] (https://discord.gg/GBxVx2JMAy) for discussions.
+You will be able to find additional guides and components at [my site](https://buymeacoffee.com/ripplebiz), or [join Andy Kirby's Discord](https://discord.gg/GBxVx2JMAy) for discussions.
 
