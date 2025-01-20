@@ -1,6 +1,11 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
-#include <SPIFFS.h>
+
+#if defined(NRF52_PLATFORM)
+  #include <InternalFileSystem.h>
+#elif defined(ESP32)
+  #include <SPIFFS.h>
+#endif
 
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
@@ -54,6 +59,10 @@
   #include <helpers/ESP32Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
   static ESP32Board board;
+#elif defined(RAK_4631)
+  #include <helpers/RAK4631Board.h>
+  #include <helpers/CustomSX1262Wrapper.h>
+  static RAK4631Board board;
 #else
   #error "need to provide a 'board' object"
 #endif
@@ -351,7 +360,9 @@ public:
   }
 };
 
-#if defined(P_LORA_SCLK)
+#if defined(NRF52_PLATFORM)
+RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, SPI);
+#elif defined(P_LORA_SCLK)
 SPIClass spi;
 RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
 #else
@@ -379,12 +390,13 @@ void setup() {
   float tcxo = 1.6f;
 #endif
 
-#if defined(P_LORA_SCLK)
+#if defined(NRF52_PLATFORM)
+  SPI.setPins(P_LORA_MISO, P_LORA_SCLK, P_LORA_MOSI);
+  SPI.begin();
+#elif defined(P_LORA_SCLK)
   spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
-  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 8, tcxo);
-#else
-  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 8, tcxo);
 #endif
+  int status = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, LORA_CR, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, LORA_TX_POWER, 8, tcxo);
   if (status != RADIOLIB_ERR_NONE) {
     delay(5000);
     Serial.print("ERROR: radio init failed: ");
@@ -402,8 +414,15 @@ void setup() {
   radio.setDio2AsRfSwitch(SX126X_DIO2_AS_RF_SWITCH);
 #endif
 
+#if defined(NRF52_PLATFORM)
+  InternalFS.begin();
+  IdentityStore store(InternalFS, "/identity");
+#elif defined(ESP32)
   SPIFFS.begin(true);
   IdentityStore store(SPIFFS, "/identity");
+#else
+  #error "need to define filesystem"
+#endif
   if (!store.load("_main", the_mesh.self_id)) {
     the_mesh.self_id = mesh::LocalIdentity(the_mesh.getRNG());  // create new random identity
     store.save("_main", the_mesh.self_id);

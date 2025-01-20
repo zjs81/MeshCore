@@ -1,13 +1,22 @@
 #pragma once
 
-#include <FS.h>
+#if defined(ESP32)
+  #include <FS.h>
+  #define FILESYSTEM  fs::FS
+#elif defined(NRF52_PLATFORM)
+  #include <Adafruit_LittleFS.h>
+  #define FILESYSTEM  Adafruit_LittleFS
+
+  using namespace Adafruit_LittleFS_Namespace;
+#endif
+
 #include <Identity.h>
 
 class IdentityStore {
-  fs::FS* _fs;
+  FILESYSTEM* _fs;
   const char* _dir;
 public:
-  IdentityStore(fs::FS& fs, const char* dir): _fs(&fs), _dir(dir) { }
+  IdentityStore(FILESYSTEM& fs, const char* dir): _fs(&fs), _dir(dir) { }
 
   void begin() { _fs->mkdir(_dir); }
   bool load(const char *name, mesh::LocalIdentity& id);
