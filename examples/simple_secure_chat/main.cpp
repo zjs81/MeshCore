@@ -191,11 +191,11 @@ protected:
     }
   }
 
-  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
+  bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     int i = matching_peer_indexes[sender_idx];
     if (i < 0 || i >= num_contacts) {
       MESH_DEBUG_PRINTLN("onPeerPathRecv: Invalid sender idx: %d", i);
-      return;
+      return false;
     }
 
     ContactInfo& from = contacts[i];
@@ -205,16 +205,11 @@ protected:
     // FUTURE: could store multiple out_paths per contact, and try to find which is the 'best'(?)
     memcpy(from.out_path, path, from.out_path_len = path_len);  // store a copy of path, for sendDirect()
 
-    if (packet->isRouteFlood()) {
-      // send a reciprocal return path to sender, but send DIRECTLY!
-      mesh::Packet* rpath = createPathReturn(from.id, secret, packet->path, packet->path_len, 0, NULL, 0);
-      if (rpath) sendDirect(rpath, path, path_len);
-    }
-
     if (extra_type == PAYLOAD_TYPE_ACK && extra_len >= 4) {
       // also got an encoded ACK!
       processAck(extra);
     }
+    return true;  // send reciprocal path if necessary
   }
 
   void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override {

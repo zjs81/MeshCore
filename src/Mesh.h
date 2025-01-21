@@ -89,8 +89,9 @@ protected:
    *         NOTE: these can be received multiple times (per sender), via differen routes
    * \param  sender_idx  index of peer, [0..n) where n is what searchPeersByHash() returned
    * \param  secret   the pre-calculated shared-secret (handy for sending response packet)
+   * \returns   true, if path was accepted and that reciprocal path should be sent
   */
-  virtual void onPeerPathRecv(Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) { }
+  virtual bool onPeerPathRecv(Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) { return false; }
 
   /**
    * \brief  A new incoming Advertisement has been received.
@@ -152,6 +153,7 @@ public:
   Packet* createAnonDatagram(uint8_t type, const LocalIdentity& sender, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len);
   Packet* createGroupDatagram(uint8_t type, const GroupChannel& channel, const uint8_t* data, size_t data_len);
   Packet* createAck(uint32_t ack_crc);
+  Packet* createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len);
   Packet* createPathReturn(const Identity& dest, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len);
 
   /**

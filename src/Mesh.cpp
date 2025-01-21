@@ -97,7 +97,13 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
                 uint8_t extra_type = data[k++];
                 uint8_t* extra = &data[k];
                 uint8_t extra_len = len - k;   // remainder of packet (may be padded with zeroes!)
-                onPeerPathRecv(pkt, j, secret, path, path_len, extra_type, extra, extra_len);
+                if (onPeerPathRecv(pkt, j, secret, path, path_len, extra_type, extra, extra_len)) {
+                  if (pkt->isRouteFlood()) {
+                    // send a reciprocal return path to sender, but send DIRECTLY!
+                    mesh::Packet* rpath = createPathReturn(&src_hash, secret, pkt->path, pkt->path_len, 0, NULL, 0);
+                    if (rpath) sendDirect(rpath, path, path_len);
+                  }
+                }
               } else {
                 onPeerDataRecv(pkt, pkt->getPayloadType(), j, secret, data, len);
               }
@@ -261,6 +267,12 @@ Packet* Mesh::createAdvert(const LocalIdentity& id, const uint8_t* app_data, siz
 #define MAX_COMBINED_PATH  (MAX_PACKET_PAYLOAD - 2 - CIPHER_BLOCK_SIZE)
 
 Packet* Mesh::createPathReturn(const Identity& dest, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len) {
+  uint8_t dest_hash[PATH_HASH_SIZE];
+  dest.copyHashTo(dest_hash);
+  return createPathReturn(dest_hash, secret, path, path_len, extra_type, extra, extra_len);
+}
+
+Packet* Mesh::createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, const uint8_t* path, uint8_t path_len, uint8_t extra_type, const uint8_t*extra, size_t extra_len) {
   if (path_len + extra_len + 5 > MAX_COMBINED_PATH) return NULL;  // too long!!
 
   Packet* packet = obtainNewPacket();
@@ -271,7 +283,7 @@ Packet* Mesh::createPathReturn(const Identity& dest, const uint8_t* secret, cons
   packet->header = (PAYLOAD_TYPE_PATH << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
 
   int len = 0;
-  len += dest.copyHashTo(&packet->payload[len]);  // dest hash
+  memcpy(&packet->payload[len], dest_hash, PATH_HASH_SIZE); len += PATH_HASH_SIZE;  // dest hash
   len += self_id.copyHashTo(&packet->payload[len]);  // src hash
 
   {

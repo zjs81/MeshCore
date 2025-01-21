@@ -118,7 +118,7 @@ protected:
     }
   }
 
-  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
+  bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     if (sender_idx >= 0 && sender_idx < MAX_CLIENTS) {
       Serial.printf("PATH to client, path_len=%d\n", (uint32_t) path_len);
 
@@ -134,6 +134,7 @@ protected:
     }
 
     // NOTE: no reciprocal path send!!
+    return false;
   }
 
 public:

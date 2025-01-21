@@ -299,7 +299,7 @@ protected:
     }
   }
 
-  void onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
+  bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
     // TODO: prevent replay attacks
     int i = matching_peer_indexes[sender_idx];
 
@@ -312,6 +312,7 @@ protected:
     }
 
     // NOTE: no reciprocal path send!!
+    return false;
   }
 
 public:
