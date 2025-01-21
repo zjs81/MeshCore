@@ -9,7 +9,6 @@
 
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
-#include <helpers/CustomSX1262Wrapper.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
@@ -30,7 +29,7 @@
   #define LORA_CR      5
 #endif
 #ifndef LORA_TX_POWER
-  #defne LORA_TX_POWER  20
+  #define LORA_TX_POWER  20
 #endif
 
 #ifndef ADVERT_NAME
@@ -49,6 +48,7 @@
 
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
+  #include <helpers/CustomSX1262Wrapper.h>
   static HeltecV3Board board;
 #elif defined(ARDUINO_XIAO_ESP32C3)
   #include <helpers/XiaoC3Board.h>
