@@ -121,7 +121,7 @@ void Dispatcher::checkRecv() {
 void Dispatcher::checkSend() {
   if (_mgr->getOutboundCount() == 0) return;  // nothing waiting to send
   if (!millisHasNowPassed(next_tx_time)) return;   // still in 'radio silence' phase (from airtime budget setting)
-  if (_radio->isReceiving()) return;  // check if radio is currently mid-receive
+  if (_radio->isReceiving()) return;  // LBT - check if radio is currently mid-receive, or if channel activity
 
   outbound = _mgr->getNextOutbound(_ms->getMillis());
   if (outbound) {

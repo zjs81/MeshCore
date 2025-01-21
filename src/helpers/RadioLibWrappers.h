@@ -9,6 +9,8 @@ protected:
   mesh::MainBoard* _board;
   uint32_t n_recv, n_sent;
 
+  void idle();
+
 public:
   RadioLibWrapper(PhysicalLayer& radio, mesh::MainBoard& board) : _radio(&radio), _board(&board) { n_recv = n_sent = 0; }
 

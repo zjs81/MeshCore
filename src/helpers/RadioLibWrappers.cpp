@@ -30,6 +30,11 @@ void RadioLibWrapper::begin() {
   }
 }
 
+void RadioLibWrapper::idle() {
+  _radio->standby();
+  state = STATE_IDLE;   // need another startReceive()
+}
+
 int RadioLibWrapper::recvRaw(uint8_t* bytes, int sz) {
   if (state & STATE_INT_READY) {
     int len = _radio->getPacketLength();
