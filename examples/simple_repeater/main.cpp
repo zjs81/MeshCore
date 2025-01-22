@@ -266,14 +266,14 @@ protected:
         MESH_DEBUG_PRINTLN("onPeerDataRecv: possible replay attack detected");
       }
     } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command
-      uint32_t timestamp;
-      memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
+      uint32_t sender_timestamp;
+      memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
       uint flags = data[4];   // message attempt number, and other flags
 
       if (flags != 0) {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported CLI text received: flags=%02x", (uint32_t)flags);
-      } else if (timestamp > client->last_timestamp) {  // prevent replay attacks 
-        client->last_timestamp = timestamp;
+      } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
+        client->last_timestamp = sender_timestamp;
 
         // len can be > original length, but 'text' will be padded with zeroes
         data[len] = 0; // need to make a C string again, with null terminator
@@ -291,10 +291,14 @@ protected:
         }
 
         uint8_t temp[166];
-        handleCommand(timestamp, (const char *) &data[5], (char *) &temp[5]);
+        handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
         int text_len = strlen((char *) &temp[5]);
         if (text_len > 0) {
           uint32_t timestamp = getRTCClock()->getCurrentTime();
+          if (timestamp == sender_timestamp) {
+            // WORKAROUND: the two timestamps need to be different, in the CLI view
+            timestamp++;
+          }
           memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
           temp[4] = 0;
 
@@ -388,7 +392,7 @@ public:
     } else if (memcmp(command, "clock sync", 10) == 0) {
       uint32_t curr = getRTCClock()->getCurrentTime();
       if (sender_timestamp > curr) {
-        getRTCClock()->setCurrentTime(sender_timestamp);
+        getRTCClock()->setCurrentTime(sender_timestamp + 1);
         strcpy(reply, "OK - clock set");
       } else {
         strcpy(reply, "ERR: clock cannot go backwards");
