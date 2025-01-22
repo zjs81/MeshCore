@@ -68,6 +68,9 @@ public:
    * \returns  one of PAYLOAD_VER_ values
    */
   uint8_t getPayloadVer() const { return (header >> PH_VER_SHIFT) & PH_VER_MASK; }
+
+  void markDoNotRetransmit() { header = 0xFF; }
+  bool isMarkedDoNotRetransmit() const { return header == 0xFF; }
 };
 
 }

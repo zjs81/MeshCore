@@ -220,20 +220,24 @@ protected:
   }
 
   void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override {
-    processAck((uint8_t *)&ack_crc);
+    if (processAck((uint8_t *)&ack_crc)) {
+      packet->markDoNotRetransmit();   // ACK was for this node, so don't retransmit
+    }
   }
 
-  void processAck(const uint8_t *data) {
+  bool processAck(const uint8_t *data) {
     if (memcmp(data, &expected_ack_crc, 4) == 0) {     // got an ACK from recipient
       Serial.printf("   Got ACK! (round trip: %d millis)\n", _ms->getMillis() - last_msg_sent);
       // NOTE: the same ACK can be received multiple times!
       expected_ack_crc = 0;  // reset our expected hash, now that we have received ACK
       txt_send_timeout = 0;
-    } else {
-      uint32_t crc;
-      memcpy(&crc, data, 4);
-      MESH_DEBUG_PRINTLN(" unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
+      return true;
     }
+
+    uint32_t crc;
+    memcpy(&crc, data, 4);
+    MESH_DEBUG_PRINTLN(" unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
+    return false;
   }
 
 public:

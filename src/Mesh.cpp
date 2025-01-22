@@ -111,7 +111,9 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
               break;
             }
           }
-          if (!found) {
+          if (found) {
+            pkt->markDoNotRetransmit();  // packet was for this node, so don't retransmit
+          } else {
             MESH_DEBUG_PRINTLN("recv matches no peers, src_hash=%02X", (uint32_t)src_hash);
           }
         }
@@ -139,6 +141,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
           int len = Utils::MACThenDecrypt(secret, data, macAndData, pkt->payload_len - i);
           if (len > 0) {  // success!
             onAnonDataRecv(pkt, pkt->getPayloadType(), sender, data, len);
+            pkt->markDoNotRetransmit();
           }
         }
         action = routeRecvPacket(pkt);
@@ -217,7 +220,8 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 }
 
 DispatcherAction Mesh::routeRecvPacket(Packet* packet) {
-  if (packet->isRouteFlood() && packet->path_len + PATH_HASH_SIZE <= MAX_PATH_SIZE && allowPacketForward(packet)) {
+  if (packet->isRouteFlood() && !packet->isMarkedDoNotRetransmit()
+    && packet->path_len + PATH_HASH_SIZE <= MAX_PATH_SIZE && allowPacketForward(packet)) {
     // append this node's hash to 'path'
     packet->path_len += self_id.copyHashTo(&packet->path[packet->path_len]);
 
