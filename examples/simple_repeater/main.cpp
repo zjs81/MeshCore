@@ -71,9 +71,6 @@
 /* ------------------------------ Code -------------------------------- */
 
 #define CMD_GET_STATS      0x01
-#define CMD_SET_CLOCK      0x02
-#define CMD_SEND_ANNOUNCE  0x03
-#define CMD_SET_CONFIG     0x04
 
 struct RepeaterStats {
   uint16_t batt_milli_volts;
@@ -98,6 +95,9 @@ struct ClientInfo {
 };
 
 #define MAX_CLIENTS   4
+
+// NOTE: need to space the ACK and the reply text apart (in CLI)
+#define CLI_REPLY_DELAY_MILLIS  1500
 
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
@@ -152,38 +152,6 @@ class MyMesh : public mesh::Mesh {
         memcpy(&reply_data[4], &stats, sizeof(stats));
 
         return 4 + sizeof(stats);  //  reply_len
-      }
-      case CMD_SET_CLOCK: {
-        if (payload_len >= 5) {
-          uint32_t curr_epoch_secs;
-          memcpy(&curr_epoch_secs, &payload[1], 4);    // first param is current UNIX time
-
-          if (curr_epoch_secs > now) {   // time can only go forward!!
-            getRTCClock()->setCurrentTime(curr_epoch_secs);
-            memcpy(&reply_data[4], "OK", 2);
-          } else {
-            memcpy(&reply_data[4], "ER", 2);
-          }
-          return 4 + 2;   //  reply_len
-        }
-        return 0;  // invalid request 
-      }
-      case CMD_SEND_ANNOUNCE: {
-        // broadcast another self Advertisement
-        sendSelfAdvertisement();
-
-        memcpy(&reply_data[4], "OK", 2);
-        return 4 + 2;  // reply_len
-      }
-      case CMD_SET_CONFIG: {
-        if (payload_len >= 4 && payload_len < 32 && memcmp(&payload[1], "AF", 2) == 0) {
-          payload[payload_len] = 0;  // make it a C string
-          airtime_factor = atof((char *) &payload[3]);
-
-          memcpy(&reply_data[4], "OK", 2);
-          return 4 + 2;  // reply_len
-        }        
-        return 0;  // unknown config var
       }
     }
     // unknown command
@@ -294,13 +262,17 @@ protected:
             }
           }
         }
+      } else {
+        MESH_DEBUG_PRINTLN("onPeerDataRecv: possible replay attack detected");
       }
     } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command
       uint32_t timestamp;
       memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
       uint flags = data[4];   // message attempt number, and other flags
 
-      if (flags == 0 && timestamp > client->last_timestamp) {  // prevent replay attacks 
+      if (flags != 0) {
+        MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported CLI text received: flags=%02x", (uint32_t)flags);
+      } else if (timestamp > client->last_timestamp) {  // prevent replay attacks 
         client->last_timestamp = timestamp;
 
         // len can be > original length, but 'text' will be padded with zeroes
@@ -332,12 +304,14 @@ protected:
           auto reply = createDatagram(PAYLOAD_TYPE_TXT_MSG, client->id, secret, temp, 5 + text_len);
           if (reply) {
             if (client->out_path_len < 0) {
-              sendFlood(reply);
+              sendFlood(reply, CLI_REPLY_DELAY_MILLIS);
             } else {
-              sendDirect(reply, client->out_path, client->out_path_len);
+              sendDirect(reply, client->out_path, client->out_path_len, CLI_REPLY_DELAY_MILLIS);
             }
           }
         }
+      } else {
+        MESH_DEBUG_PRINTLN("onPeerDataRecv: possible replay attack detected");
       }
     }
   }
@@ -423,8 +397,15 @@ public:
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
       sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+    } else if (memcmp(command, "set ", 4) == 0) {
+      if (memcmp(&command[4], "AF", 2) == 0 || memcmp(&command[4], "af=", 2) == 0) {
+        airtime_factor = atof(&command[7]);
+        strcpy(reply, "OK");
+      } else {
+        sprintf(reply, "unknown config: %s", &command[4]);
+      }
     } else {
-      sprintf(reply, "Unknown: %s (commands: reboot, advert, clock)", command);
+      sprintf(reply, "Unknown: %s (commands: reboot, advert, clock, set)", command);
     }
   }
 };
@@ -439,7 +420,14 @@ RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BU
 #endif
 StdRNG fast_rng;
 SimpleMeshTables tables;
-MyMesh the_mesh(*new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, *new VolatileRTCClock(), tables);
+
+#ifdef ESP32
+ESP32RTCClock rtc_clock;
+#else
+VolatileRTCClock rtc_clock; 
+#endif
+
+MyMesh the_mesh(*new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, rtc_clock, tables);
 
 void halt() {
   while (1) ;
@@ -452,6 +440,9 @@ void setup() {
   delay(1000);
 
   board.begin();
+#ifdef ESP32
+  rtc_clock.begin();
+#endif
 
 #ifdef SX126X_DIO3_TCXO_VOLTAGE
   float tcxo = SX126X_DIO3_TCXO_VOLTAGE;
