@@ -47,6 +47,15 @@
   #define  ADMIN_PASSWORD  "password"
 #endif
 
+#ifndef MAX_CLIENTS 
+ #define MAX_CLIENTS           32
+#endif
+
+#ifndef MAX_UNSYNCED_POSTS
+  #define MAX_UNSYNCED_POSTS    16
+#endif
+
+
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
@@ -77,7 +86,9 @@ struct ClientInfo {
   uint32_t sync_since;  // sync messages SINCE this timestamp (by OUR clock)
   uint32_t pending_ack;
   uint32_t push_post_timestamp;
+  unsigned long ack_timeout;
   bool     is_admin;
+  uint8_t  push_failures;
   uint8_t  secret[PUB_KEY_SIZE];
   int      out_path_len;
   uint8_t  out_path[MAX_PATH_SIZE];
@@ -91,12 +102,13 @@ struct PostInfo {
   char text[MAX_POST_TEXT_LEN+1];
 };
 
-#define MAX_CLIENTS           32
-#define MAX_UNSYNCED_POSTS    16
-
 #define REPLY_DELAY_MILLIS         1500
 #define PUSH_NOTIFY_DELAY_MILLIS   1000
 #define SYNC_PUSH_INTERVAL         1000
+
+#define PUSH_ACK_TIMEOUT_FLOOD    12000
+#define PUSH_TIMEOUT_BASE          4000
+#define PUSH_ACK_TIMEOUT_FACTOR    2000
 
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
@@ -115,7 +127,7 @@ class MyMesh : public mesh::Mesh {
     }
     ClientInfo* newClient;
     if (num_clients < MAX_CLIENTS) {
-      auto newClient = &known_clients[num_clients++];
+      newClient = &known_clients[num_clients++];
     } else {    // table is currently full
       // evict least active client
       uint32_t oldest_timestamp = 0xFFFFFFFF;
@@ -133,6 +145,13 @@ class MyMesh : public mesh::Mesh {
     newClient->last_timestamp = 0;
     self_id.calcSharedSecret(newClient->secret, id);   // calc ECDH shared secret
     return newClient;
+  }
+
+  void  evict(ClientInfo* client) {
+    client->last_activity = 0;  // this slot will now be re-used (will be oldest)
+    memset(client->id.pub_key, 0, sizeof(client->id.pub_key));
+    memset(client->secret, 0, sizeof(client->secret));
+    client->pending_ack = 0;
   }
 
   void addPost(ClientInfo* client, const char* postData, char reply[]) {
@@ -177,10 +196,13 @@ class MyMesh : public mesh::Mesh {
     if (reply) {
       if (client->out_path_len < 0) {
         sendFlood(reply);
+        client->ack_timeout = futureMillis(PUSH_ACK_TIMEOUT_FLOOD);
       } else {
         sendDirect(reply, client->out_path, client->out_path_len);
+        client->ack_timeout = futureMillis(PUSH_TIMEOUT_BASE + PUSH_ACK_TIMEOUT_FACTOR * (client->out_path_len + 1));
       }
     } else {
+      client->pending_ack = 0;
       MESH_DEBUG_PRINTLN("Unable to push post to client");
     }
   }
@@ -190,6 +212,7 @@ class MyMesh : public mesh::Mesh {
       auto client = &known_clients[i];
       if (client->pending_ack && memcmp(data, &client->pending_ack, 4) == 0) {     // got an ACK from Client!
         client->pending_ack = 0;    // clear this, so next push can happen
+        client->push_failures = 0;
         client->sync_since = client->push_post_timestamp;   // advance Client's SINCE timestamp, to sync next post
         return true;
       }
@@ -238,6 +261,7 @@ protected:
       client->last_timestamp = sender_timestamp;
       client->sync_since = sender_sync_since;
       client->pending_ack = 0;
+      client->push_failures = 0;
 
       uint32_t now = getRTCClock()->getCurrentTime();
       client->last_activity = now;
@@ -464,6 +488,7 @@ public:
       }
     } else {
       // unknown command
+      reply[0] = 0;
       return false;
     }
     return true;
@@ -473,9 +498,21 @@ public:
     mesh::Mesh::loop();
 
     if (millisHasNowPassed(next_push) && num_clients > 0) {
+      // check for ACK timeouts
+      for (int i = 0; i < num_clients; i++) {
+        auto c = &known_clients[i];
+        if (c->pending_ack && millisHasNowPassed(c->ack_timeout)) {
+          c->push_failures++;
+          c->pending_ack = 0;   // reset  (TODO: keep prev expected_ack's in a list, incase they arrive LATER, after we retry)
+
+          if (c->push_failures >= 3) {
+            evict(c);
+          }
+        }
+      }
       // check next Round-Robin client, and sync next new post
       auto client = &known_clients[next_client_idx];
-      if (client->pending_ack == 0) {
+      if (client->pending_ack == 0 && client->last_activity != 0) {  // not already waiting for ACK, AND not evicted
         for (int k = 0, idx = next_post_idx; k < MAX_UNSYNCED_POSTS; k++) {
           if (posts[idx].post_timestamp > client->sync_since   // is new post for this Client?
             && !posts[idx].author.matches(client->id)) {    // don't push posts to the author
