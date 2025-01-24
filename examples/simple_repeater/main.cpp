@@ -18,6 +18,8 @@
 
 /* ------------------------------ Config -------------------------------- */
 
+#define FIRMWARE_VER_TEXT   "v1 (build: 24 Jan 2025)"
+
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
 #endif
@@ -389,8 +391,10 @@ public:
       } else {
         sprintf(reply, "unknown config: %s", &command[4]);
       }
+    } else if (memcmp(command, "ver", 3) == 0) {
+      strcpy(reply, FIRMWARE_VER_TEXT);
     } else {
-      sprintf(reply, "Unknown: %s (commands: reboot, advert, clock, set)", command);
+      sprintf(reply, "Unknown: %s (commands: reboot, advert, clock, set, ver)", command);
     }
   }
 };
