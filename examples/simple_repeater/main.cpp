@@ -13,6 +13,7 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/AdvertDataHelpers.h>
 #include <RTClib.h>
 
 /* ------------------------------ Config -------------------------------- */
@@ -345,34 +346,14 @@ public:
     num_clients = 0;
   }
 
-  #define ADV_TYPE_NONE         0   // unknown
-  #define ADV_TYPE_CHAT         1
-  #define ADV_TYPE_REPEATER     2
-  //FUTURE: 3..15
-
-  #define ADV_LATLON_MASK       0x10
-  #define ADV_BATTERY_MASK      0x20
-  #define ADV_TEMPERATURE_MASK  0x40
-  #define ADV_NAME_MASK         0x80
-
   void sendSelfAdvertisement() {
-    uint8_t app_data[MAX_ADVERT_DATA_SIZE+32];
-    app_data[0] = ADV_TYPE_REPEATER | ADV_NAME_MASK;
-    int i = 1;
-    int32_t lat = ADVERT_LAT * 1E6;
-    int32_t lon = ADVERT_LON * 1E6;
-    if (!(lat == 0 && lon == 0)) {
-      app_data[0] |= ADV_LATLON_MASK;
-      memcpy(&app_data[i], &lat, 4); i += 4;
-      memcpy(&app_data[i], &lon, 4); i += 4;
+    uint8_t app_data[MAX_ADVERT_DATA_SIZE];
+    uint8_t app_data_len;
+    {
+      AdvertDataBuilder builder(ADV_TYPE_REPEATER, ADVERT_NAME, ADVERT_LAT, ADVERT_LON);
+      app_data_len = builder.encodeTo(app_data);
     }
-    strcpy((char *)&app_data[i], ADVERT_NAME);
-    int app_data_len = i + strlen(ADVERT_NAME);
-    if (app_data_len > MAX_ADVERT_DATA_SIZE) {
-      app_data_len = MAX_ADVERT_DATA_SIZE;
-      app_data[MAX_ADVERT_DATA_SIZE - 1] = 0;  // truncate the ADVERT_NAME
-    }
- 
+
     mesh::Packet* pkt = createAdvert(self_id, app_data, app_data_len);
     if (pkt) {
       sendFlood(pkt, 800);  // add slight delay

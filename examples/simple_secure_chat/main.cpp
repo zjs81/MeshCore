@@ -7,6 +7,7 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
+#include <helpers/AdvertDataHelpers.h>
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
@@ -132,14 +133,11 @@ protected:
       }
     }
     // unknown node
-    if (app_data_len > 0 && app_data[0] == (ADV_TYPE_CHAT | ADV_NAME_MASK)) {  // is it a 'Chat' node (with a name)?
+    AdvertDataParser parser(app_data, app_data_len);
+    if (parser.getType() == ADV_TYPE_CHAT && parser.hasName()) {  // is it a 'Chat' node (with a name)?
       // automatically add to our contacts
-      char name[32];
-      memcpy(name, &app_data[1], app_data_len - 1);
-      name[app_data_len - 1] = 0;  // need null terminator
-
-      addContact(name, id);
-      Serial.printf("   ADDED contact: %s\n", name);
+      addContact(parser.getName(), id);
+      Serial.printf("   ADDED contact: %s\n", parser.getName());
     } else {
       Serial.printf("   Unknown app_data type: %02X, len=%d\n", app_data[0], app_data_len);
     }
@@ -268,10 +266,12 @@ public:
   }
 
   void sendSelfAdvert() {
-    uint8_t app_data[32];
-    app_data[0] = ADV_TYPE_CHAT | ADV_NAME_MASK;
-    strcpy((char *)&app_data[1], USER_NAME);
-    int app_data_len = 1 + strlen(USER_NAME);
+    uint8_t app_data[MAX_ADVERT_DATA_SIZE];
+    uint8_t app_data_len;
+    {
+      AdvertDataBuilder builder(ADV_TYPE_CHAT, USER_NAME);
+      app_data_len = builder.encodeTo(app_data);
+    }
  
     mesh::Packet* adv = createAdvert(self_id, app_data, app_data_len);
     if (adv) {
