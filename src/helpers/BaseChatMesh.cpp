@@ -1,4 +1,6 @@
 #include <helpers/BaseChatMesh.h>
+#include <base64.hpp>
+#include <Utils.h>
 
 mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name) {
   uint8_t app_data[MAX_ADVERT_DATA_SIZE];
@@ -150,6 +152,30 @@ void BaseChatMesh::onAckRecv(mesh::Packet* packet, uint32_t ack_crc) {
   }
 }
 
+int BaseChatMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) {
+  int n = 0;
+  for (int i = 0; i < num_channels && n < max_matches; i++) {
+    if (channels[i].hash[0] == hash[0]) {
+      dest[n++] = channels[i];
+    }
+  }
+  return n;
+}
+
+void BaseChatMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) {
+  uint8_t txt_type = data[4];
+  if (type == PAYLOAD_TYPE_GRP_TXT && len > 5 && (txt_type >> 2) == 0) {  // 0 = plain text msg
+    uint32_t timestamp;
+    memcpy(&timestamp, data, 4);
+
+    // len can be > original length, but 'text' will be padded with zeroes
+    data[len] = 0; // need to make a C string again, with null terminator
+
+    // notify UI  of this new message
+    onChannelMessageRecv(channel, packet->isRouteFlood() ? packet->path_len : -1, timestamp, (const char *) &data[5]);  // let UI know
+  }
+}
+
 mesh::Packet* BaseChatMesh::composeMsgPacket(const ContactInfo& recipient, uint8_t attempt, const char *text, uint32_t& expected_ack) {
   int text_len = strlen(text);
   if (text_len > MAX_TEXT_LEN) return NULL;
@@ -238,6 +264,21 @@ bool BaseChatMesh::addContact(const ContactInfo& contact) {
     return true;  // success
   }
   return false;
+}
+
+mesh::GroupChannel* BaseChatMesh::addChannel(const char* psk_base64) {
+  if (num_channels < MAX_CHANNELS) {
+    auto dest = &channels[num_channels];
+
+    memset(dest->secret, 0, sizeof(dest->secret));
+    int len = decode_base64((unsigned char *) psk_base64, strlen(psk_base64), dest->secret);
+    if (len == 32 || len == 16) {
+      mesh::Utils::sha256(dest->hash, sizeof(dest->hash), dest->secret, len);
+      num_channels++;
+      return dest;
+    }
+  }
+  return NULL;
 }
 
 bool ContactsIterator::hasNext(const BaseChatMesh* mesh, ContactInfo& dest) {

@@ -48,6 +48,8 @@ class BaseChatMesh : public mesh::Mesh {
   int sort_array[MAX_CONTACTS];
   int matching_peer_indexes[MAX_SEARCH_RESULTS];
   unsigned long txt_send_timeout;
+  mesh::GroupChannel channels[MAX_CHANNELS];
+  int num_channels;
 
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint8_t attempt, const char *text, uint32_t& expected_ack);
 
@@ -56,6 +58,7 @@ protected:
       : mesh::Mesh(radio, ms, rng, rtc, mgr, tables)
   { 
     num_contacts = 0;
+    num_channels = 0;
     txt_send_timeout = 0;
   }
 
@@ -67,6 +70,7 @@ protected:
   virtual uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const = 0;
   virtual uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const = 0;
   virtual void onSendTimeout() = 0;
+  virtual void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) = 0;
 
   // Mesh overrides
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;
@@ -75,6 +79,8 @@ protected:
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
   bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override;
+  int searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel channels[], int max_matches) override;
+  void onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) override;
 
 public:
   mesh::Packet* createSelfAdvert(const char* name);
@@ -83,6 +89,7 @@ public:
   void scanRecentContacts(int last_n, ContactVisitor* visitor);
   ContactInfo* searchContactsByPrefix(const char* name_prefix);
   bool  addContact(const ContactInfo& contact);
+  mesh::GroupChannel* addChannel(const char* psk_base64);
 
   void loop();
 };

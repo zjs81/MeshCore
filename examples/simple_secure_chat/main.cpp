@@ -45,6 +45,7 @@
 #define DIRECT_SEND_PERHOP_FACTOR         4.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS   200
 
+#define  PUBLIC_GROUP_PSK  "izOH6cXN6mrJ5e26oRXNcg=="
 
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
@@ -74,6 +75,7 @@ static int curr_contact_idx = 0;
 class MyMesh : public BaseChatMesh, ContactVisitor {
   FILESYSTEM* _fs;
   uint32_t expected_ack_crc;
+  mesh::GroupChannel* _public;
   unsigned long last_msg_sent;
   ContactInfo* curr_recipient;
   char command[MAX_TEXT_LEN+1];
@@ -191,6 +193,15 @@ protected:
     }
   }
 
+  void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) override {
+    if (in_path_len < 0) {
+      Serial.printf("PUBLIC CHANNEL MSG -> (Direct!)\n");
+    } else {
+      Serial.printf("PUBLIC CHANNEL MSG -> (Flood) hops %d\n", in_path_len);
+    }
+    Serial.printf("   %s\n", text);
+  }
+
   uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
     return SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * pkt_airtime_millis);
   }
@@ -226,6 +237,7 @@ public:
     }
 
     loadContacts();
+    _public = addChannel(PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   }
 
   void showWelcome() {
@@ -260,6 +272,23 @@ public:
         }
       } else {
         Serial.println("   ERROR: no recipient selected (use 'to' cmd).");
+      }
+    } else if (memcmp(command, "public ", 7) == 0) {  // send GroupChannel msg
+      uint8_t temp[5+MAX_TEXT_LEN+32];
+      uint32_t timestamp = getRTCClock()->getCurrentTime();
+      memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
+      temp[4] = 0;  // attempt and flags
+
+      sprintf((char *) &temp[5], "%s: %s", self_name, &command[7]);  // <sender>: <msg>
+      temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
+
+      int len = strlen((char *) &temp[5]);
+      auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, *_public, temp, 5 + len);
+      if (pkt) {
+        sendFlood(pkt);
+        Serial.println("   Sent.");
+      } else {
+        Serial.println("   ERROR: unable to send");
       }
     } else if (memcmp(command, "list", 4) == 0) {  // show Contact list, by most recent
       int n = 0;
@@ -313,6 +342,7 @@ public:
       Serial.println("   send <text>");
       Serial.println("   advert");
       Serial.println("   reset path");
+      Serial.println("   public <text>");
     } else {
       Serial.print("   ERROR: unknown command: "); Serial.println(command);
     }
