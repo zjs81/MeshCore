@@ -53,3 +53,8 @@ public:
   double getLat() const { return ((double)_lat) / 1000000.0; }
   double getLon() const { return ((double)_lon) / 1000000.0; }
 };
+
+class AdvertTimeHelper {
+public:
+  static void formatRelativeTimeDiff(char dest[], int32_t seconds_from_now, bool short_fmt);
+};

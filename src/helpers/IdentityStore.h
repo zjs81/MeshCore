@@ -20,5 +20,7 @@ public:
 
   void begin() { _fs->mkdir(_dir); }
   bool load(const char *name, mesh::LocalIdentity& id);
+  bool load(const char *name, mesh::LocalIdentity& id, char display_name[], int max_name_sz);
   bool save(const char *name, const mesh::LocalIdentity& id);
+  bool save(const char *name, const mesh::LocalIdentity& id, const char display_name[]);
 };

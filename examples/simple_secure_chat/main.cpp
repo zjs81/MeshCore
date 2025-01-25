@@ -1,13 +1,20 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
 
+#if defined(NRF52_PLATFORM)
+  #include <InternalFileSystem.h>
+#elif defined(ESP32)
+  #include <SPIFFS.h>
+#endif
+
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
 #include <helpers/RadioLibWrappers.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
-#include <helpers/AdvertDataHelpers.h>
+#include <helpers/IdentityStore.h>
+#include <RTClib.h>
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
@@ -27,22 +34,31 @@
   #define LORA_TX_POWER  20
 #endif
 
-//#define RUN_AS_ALICE    true
-
-#if RUN_AS_ALICE
-  #define  USER_NAME  "Alice"
-  const char* alice_private = "B8830658388B2DDF22C3A508F4386975970CDE1E2A2A495C8F3B5727957A97629255A1392F8BA4C26A023A0DAB78BFC64D261C8E51507496DD39AFE3707E7B42";
-#else
-  #define  USER_NAME  "Bob"
-  const char *bob_private = "30BAA23CCB825D8020A59C936D0AB7773B07356020360FC77192813640BAD375E43BBF9A9A7537E4B9614610F1F2EF874AAB390BA9B0C2F01006B01FDDFEFF0C";
+#ifndef MAX_CONTACTS
+  #define MAX_CONTACTS         100
 #endif
-  const char *alice_public = "106A5136EC0DD797650AD204C065CF9B66095F6ED772B0822187785D65E11B1F";
-  const char *bob_public = "020BCEDAC07D709BD8507EC316EB5A7FF2F0939AF5057353DCE7E4436A1B9681";
 
-#ifdef HELTEC_LORA_V3
+#include <helpers/BaseChatMesh.h>
+
+#define SEND_TIMEOUT_BASE_MILLIS          300
+#define FLOOD_SEND_TIMEOUT_FACTOR         16.0f
+#define DIRECT_SEND_PERHOP_FACTOR         4.0f
+#define DIRECT_SEND_PERHOP_EXTRA_MILLIS   200
+
+
+#if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
   static HeltecV3Board board;
+#elif defined(ARDUINO_XIAO_ESP32C3)
+  #include <helpers/XiaoC3Board.h>
+  #include <helpers/CustomSX1262Wrapper.h>
+  #include <helpers/CustomSX1268Wrapper.h>
+  static XiaoC3Board board;
+#elif defined(SEEED_XIAO_S3)
+  #include <helpers/ESP32Board.h>
+  #include <helpers/CustomSX1262Wrapper.h>
+  static ESP32Board board;
 #elif defined(RAK_4631)
   #include <helpers/RAK4631Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
@@ -51,234 +67,278 @@
   #error "need to provide a 'board' object"
 #endif
 
-#define SEND_TIMEOUT_BASE_MILLIS          300
-#define FLOOD_SEND_TIMEOUT_FACTOR         16.0f
-#define DIRECT_SEND_PERHOP_FACTOR         4.0f
-#define DIRECT_SEND_PERHOP_EXTRA_MILLIS   100
-
 /* -------------------------------------------------------------------------------------- */
 
-static unsigned long txt_send_timeout;
 static int curr_contact_idx = 0;
 
-#define MAX_CONTACTS         8
-#define MAX_SEARCH_RESULTS   2
+class MyMesh : public BaseChatMesh, ContactVisitor {
+  FILESYSTEM* _fs;
+  uint32_t expected_ack_crc;
+  unsigned long last_msg_sent;
+  ContactInfo* curr_recipient;
+  char command[MAX_TEXT_LEN+1];
 
-#define MAX_TEXT_LEN    (10*CIPHER_BLOCK_SIZE)  // must be LESS than (MAX_PACKET_PAYLOAD - 4 - CIPHER_MAC_SIZE - 1)
+  const char* getTypeName(uint8_t type) const {
+    if (type == ADV_TYPE_CHAT) return "Chat";
+    if (type == ADV_TYPE_REPEATER) return "Repeater";
+    if (type == ADV_TYPE_ROOM) return "Room";
+    return "??";  // unknown
+  }
 
-struct ContactInfo {
-  mesh::Identity id;
-  const char* name;
-  int out_path_len;
-  uint8_t out_path[MAX_PATH_SIZE];
-  uint32_t last_advert_timestamp;
-  uint8_t shared_secret[PUB_KEY_SIZE];
-};
+  void loadContacts() {
+    if (_fs->exists("/contacts")) {
+      File file = _fs->open("/contacts");
+      if (file) {
+        bool full = false;
+        while (!full) {
+          ContactInfo c;
+          uint8_t pub_key[32];
+          uint8_t unused;
+          uint32_t reserved;
 
-class MyMesh : public mesh::Mesh {
-public:
-  ContactInfo contacts[MAX_CONTACTS];
-  int num_contacts;
+          bool success = (file.read(pub_key, 32) == 32);
+          success = success && (file.read((uint8_t *) &c.name, 32) == 32);
+          success = success && (file.read(&c.type, 1) == 1);
+          success = success && (file.read(&c.flags, 1) == 1);
+          success = success && (file.read(&unused, 1) == 1);
+          success = success && (file.read((uint8_t *) &reserved, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.out_path_len, 1) == 1);
+          success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
+          success = success && (file.read(c.out_path, 64) == 64);
 
-  void addContact(const char* name, const mesh::Identity& id) {
-    if (num_contacts < MAX_CONTACTS) {
-      curr_contact_idx = num_contacts;  // auto-select this contact as current selection
+          if (!success) break;  // EOF
 
-      contacts[num_contacts].id = id;
-      contacts[num_contacts].name = strdup(name);
-      contacts[num_contacts].last_advert_timestamp = 0;
-      contacts[num_contacts].out_path_len = -1;
-      // only need to calculate the shared_secret once, for better performance
-      self_id.calcSharedSecret(contacts[num_contacts].shared_secret, id);
-      num_contacts++;
+          c.id = mesh::Identity(pub_key);
+          if (!addContact(c)) full = true;
+        }
+        file.close();
+      }
+    }
+  }
+
+  void saveContacts() {
+#if defined(NRF52_PLATFORM)
+    File file = _fs->open("/contacts", FILE_O_WRITE);
+    if (file) { file.seek(0); file.truncate(); }
+#else
+    File file = _fs->open("/contacts", "w", true);
+#endif
+    if (file) {
+      ContactsIterator iter;
+      ContactInfo c;
+      uint8_t unused = 0;
+      uint32_t reserved = 0;
+
+      while (iter.hasNext(this, c)) {
+        bool success = (file.write(c.id.pub_key, 32) == 32);
+        success = success && (file.write((uint8_t *) &c.name, 32) == 32);
+        success = success && (file.write(&c.type, 1) == 1);
+        success = success && (file.write(&c.flags, 1) == 1);
+        success = success && (file.write(&unused, 1) == 1);
+        success = success && (file.write((uint8_t *) &reserved, 4) == 4);
+        success = success && (file.write((uint8_t *) &c.out_path_len, 1) == 1);
+        success = success && (file.write((uint8_t *) &c.last_advert_timestamp, 4) == 4);
+        success = success && (file.write(c.out_path, 64) == 64);
+
+        if (!success) break;  // write failed
+      }
+      file.close();
     }
   }
 
 protected:
-  int  matching_peer_indexes[MAX_SEARCH_RESULTS];
+  void onDiscoveredContact(ContactInfo& contact, bool is_new) override {
+    // TODO: if not in favs,  prompt to add as fav(?)
 
-  int searchPeersByHash(const uint8_t* hash) override {
-    int n = 0;
-    for (int i = 0; i < num_contacts && n < MAX_SEARCH_RESULTS; i++) {
-      if (contacts[i].id.isHashMatch(hash)) {
-        matching_peer_indexes[n++] = i;  // store the INDEXES of matching contacts (for subsequent 'peer' methods)
-      }
-    }
-    return n;
+    Serial.printf("ADVERT from -> %s\n", contact.name);
+    Serial.printf("  type: %s\n", getTypeName(contact.type));
+    Serial.print("   public key: "); mesh::Utils::printHex(Serial, contact.id.pub_key, PUB_KEY_SIZE); Serial.println();
+
+    saveContacts();
   }
 
-  #define ADV_TYPE_NONE         0   // unknown
-  #define ADV_TYPE_CHAT         1
-  #define ADV_TYPE_REPEATER     2
-  //FUTURE: 3..15
-
-  #define ADV_LATLON_MASK       0x10
-  #define ADV_BATTERY_MASK      0x20
-  #define ADV_TEMPERATURE_MASK  0x40
-  #define ADV_NAME_MASK         0x80
-
-  void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override {
-    Serial.print("Valid Advertisement -> ");
-    mesh::Utils::printHex(Serial, id.pub_key, PUB_KEY_SIZE);
-    Serial.println();
-
-    for (int i = 0; i < num_contacts; i++) {
-      ContactInfo& from = contacts[i];
-      if (id.matches(from.id)) {  // is from one of our contacts
-        if (timestamp > from.last_advert_timestamp) {  // check for replay attacks!!
-          from.last_advert_timestamp = timestamp;
-          Serial.printf("   From contact: %s\n", from.name);
-        }
-        return;
-      }
-    }
-    // unknown node
-    AdvertDataParser parser(app_data, app_data_len);
-    if (parser.getType() == ADV_TYPE_CHAT && parser.hasName()) {  // is it a 'Chat' node (with a name)?
-      // automatically add to our contacts
-      addContact(parser.getName(), id);
-      Serial.printf("   ADDED contact: %s\n", parser.getName());
-    } else {
-      Serial.printf("   Unknown app_data type: %02X, len=%d\n", app_data[0], app_data_len);
-    }
+  void onContactPathUpdated(const ContactInfo& contact) override {
+    Serial.printf("PATH to: %s, path_len=%d\n", contact.name, (int32_t) contact.out_path_len);
+    saveContacts();
   }
 
-  void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override {
-    int i = matching_peer_indexes[peer_idx];
-    if (i >= 0 && i < num_contacts) {
-      // lookup pre-calculated shared_secret
-      memcpy(dest_secret, contacts[i].shared_secret, PUB_KEY_SIZE);
-    } else {
-      MESH_DEBUG_PRINTLN("getPeerSHharedSecret: Invalid peer idx: %d", i);
-    }
-  }
-
-  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override {
-    if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
-      int i = matching_peer_indexes[sender_idx];
-      if (i < 0 || i >= num_contacts) {
-        MESH_DEBUG_PRINTLN("onPeerDataRecv: Invalid sender idx: %d", i);
-        return;
-      }
-
-      ContactInfo& from = contacts[i];
-
-      uint32_t timestamp;
-      memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
-      uint flags = data[4];   // message attempt number, and other flags
-
-      // len can be > original length, but 'text' will be padded with zeroes
-      data[len] = 0; // need to make a C string again, with null terminator
-
-      //if ( ! alreadyReceived timestamp ) {
-      Serial.printf("(%s) MSG -> from %s\n", packet->isRouteFlood() ? "FLOOD" : "DIRECT", from.name);
-      Serial.printf("   %s\n", (const char *) &data[5]);
-      //}
-
-      uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
-      mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 5 + strlen((char *)&data[5]), from.id.pub_key, PUB_KEY_SIZE);
-
-      if (packet->isRouteFlood()) {
-        // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the ACK
-        mesh::Packet* path = createPathReturn(from.id, secret, packet->path, packet->path_len,
-                                              PAYLOAD_TYPE_ACK, (uint8_t *) &ack_hash, 4);
-        if (path) sendFlood(path);
-      } else {
-        mesh::Packet* ack = createAck(ack_hash);
-        if (ack) {
-          if (from.out_path_len < 0) {
-            sendFlood(ack);
-          } else {
-            sendDirect(ack, from.out_path, from.out_path_len);
-          }
-        }
-      }
-    }
-  }
-
-  bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override {
-    int i = matching_peer_indexes[sender_idx];
-    if (i < 0 || i >= num_contacts) {
-      MESH_DEBUG_PRINTLN("onPeerPathRecv: Invalid sender idx: %d", i);
-      return false;
-    }
-
-    ContactInfo& from = contacts[i];
-    Serial.printf("PATH to: %s, path_len=%d\n", from.name, (uint32_t) path_len);
-
-    // NOTE: for this impl, we just replace the current 'out_path' regardless, whenever sender sends us a new out_path.
-    // FUTURE: could store multiple out_paths per contact, and try to find which is the 'best'(?)
-    memcpy(from.out_path, path, from.out_path_len = path_len);  // store a copy of path, for sendDirect()
-
-    if (extra_type == PAYLOAD_TYPE_ACK && extra_len >= 4) {
-      // also got an encoded ACK!
-      processAck(extra);
-    }
-    return true;  // send reciprocal path if necessary
-  }
-
-  void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override {
-    if (processAck((uint8_t *)&ack_crc)) {
-      packet->markDoNotRetransmit();   // ACK was for this node, so don't retransmit
-    }
-  }
-
-  bool processAck(const uint8_t *data) {
+  bool processAck(const uint8_t *data) override {
     if (memcmp(data, &expected_ack_crc, 4) == 0) {     // got an ACK from recipient
       Serial.printf("   Got ACK! (round trip: %d millis)\n", _ms->getMillis() - last_msg_sent);
       // NOTE: the same ACK can be received multiple times!
       expected_ack_crc = 0;  // reset our expected hash, now that we have received ACK
-      txt_send_timeout = 0;
       return true;
     }
 
-    uint32_t crc;
-    memcpy(&crc, data, 4);
-    MESH_DEBUG_PRINTLN(" unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
+    //uint32_t crc;
+    //memcpy(&crc, data, 4);
+    //MESH_DEBUG_PRINTLN("unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
     return false;
   }
 
+  void onMessageRecv(const ContactInfo& from, bool was_flood, uint32_t sender_timestamp, const char *text) override {
+    Serial.printf("(%s) MSG -> from %s\n", was_flood ? "FLOOD" : "DIRECT", from.name);
+    Serial.printf("   %s\n", text);
+
+    if (strcmp(text, "clock sync") == 0) {  // special text command
+      uint32_t curr = getRTCClock()->getCurrentTime();
+      if (sender_timestamp > curr) {
+        getRTCClock()->setCurrentTime(sender_timestamp + 1);
+        Serial.println("   (OK - clock set!)");
+      } else {
+        Serial.println("   (ERR: clock cannot go backwards)");
+      }
+    }
+  }
+
+  uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
+    return SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * pkt_airtime_millis);
+  }
+  uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const override {
+    return SEND_TIMEOUT_BASE_MILLIS + 
+         ( (pkt_airtime_millis*DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) * (path_len + 1));
+  }
+
+  void onSendTimeout() override {
+    Serial.println("   ERROR: timed out, no ACK.");
+  }
+
 public:
-  uint32_t expected_ack_crc;
-  unsigned long last_msg_sent;
+  char self_name[sizeof(ContactInfo::name)];
 
   MyMesh(RadioLibWrapper& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
-     : mesh::Mesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
+     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
-    num_contacts = 0;
+    command[0] = 0;
+    curr_recipient = NULL;
   }
 
-  mesh::Packet* composeMsgPacket(ContactInfo& recipient, uint8_t attempt, const char *text) {
-    int text_len = strlen(text);
-    if (text_len > MAX_TEXT_LEN) return NULL;
+  void begin(FILESYSTEM& fs) {
+    _fs = &fs;
 
-    uint8_t temp[5+MAX_TEXT_LEN+1];
-    uint32_t timestamp = getRTCClock()->getCurrentTime();
-    memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-    temp[4] = attempt;
-    memcpy(&temp[5], text, text_len + 1);
+    BaseChatMesh::begin();
 
-    // calc expected ACK reply
-    mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
-    last_msg_sent = _ms->getMillis();
-
-    return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
-  }
-
-  void sendSelfAdvert() {
-    uint8_t app_data[MAX_ADVERT_DATA_SIZE];
-    uint8_t app_data_len;
-    {
-      AdvertDataBuilder builder(ADV_TYPE_CHAT, USER_NAME);
-      app_data_len = builder.encodeTo(app_data);
+    strcpy(self_name, "UNSET");
+    IdentityStore store(fs, "/identity");
+    if (!store.load("_main", self_id, self_name, sizeof(self_name))) {
+      self_id = mesh::LocalIdentity(getRNG());  // create new random identity
+      store.save("_main", self_id);
     }
- 
-    mesh::Packet* adv = createAdvert(self_id, app_data, app_data_len);
-    if (adv) {
-      sendFlood(adv, 800);  // add slight delay
-      Serial.println("   (advert sent).");
+
+    loadContacts();
+  }
+
+  void showWelcome() {
+    Serial.println("===== MeshCore Chat Terminal =====");
+    Serial.println();
+    Serial.printf("WELCOME  %s\n", self_name);
+    Serial.println("   (enter 'help' for basic commands)");
+    Serial.println();
+  }
+
+  // ContactVisitor
+  void onContactVisit(const ContactInfo& contact) override {
+    Serial.printf("   %s - ", contact.name);
+    char tmp[40];
+    int32_t secs = contact.last_advert_timestamp - getRTCClock()->getCurrentTime();
+    AdvertTimeHelper::formatRelativeTimeDiff(tmp, secs, false);
+    Serial.println(tmp);
+  }
+
+  void handleCommand(const char* command) {
+    while (*command == ' ') command++;  // skip leading spaces
+
+    if (memcmp(command, "send ", 5) == 0) {
+      if (curr_recipient) {
+        const char *text = &command[5];
+        int result = sendMessage(*curr_recipient, 0, text, expected_ack_crc);
+        if (result == MSG_SEND_FAILED) {
+          Serial.println("   ERROR: unable to send.");
+        } else {
+          last_msg_sent = _ms->getMillis();
+          Serial.printf("   (message sent - %s)\n", result == MSG_SEND_SENT_FLOOD ? "FLOOD" : "DIRECT");
+        }
+      } else {
+        Serial.println("   ERROR: no recipient selected (use 'to' cmd).");
+      }
+    } else if (memcmp(command, "list", 4) == 0) {  // show Contact list, by most recent
+      int n = 0;
+      if (command[4] == ' ') {  // optional param, last 'N'
+        n = atoi(&command[5]);
+      }
+      scanRecentContacts(n, this);
+    } else if (strcmp(command, "clock") == 0) {    // show current time
+      uint32_t now = getRTCClock()->getCurrentTime();
+      DateTime dt = DateTime(now);
+      Serial.printf(   "%02d:%02d - %d/%d/%d UTC\n", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+    } else if (memcmp(command, "name ", 5) == 0) {  // set name
+      strncpy(self_name, &command[5], sizeof(self_name)-1);
+      self_name[sizeof(self_name)-1] = 0;
+      IdentityStore store(*_fs, "/identity");       // update IdentityStore
+      store.save("_main", self_id, self_name);
+    } else if (memcmp(command, "to ", 3) == 0) {  // set current recipient
+      curr_recipient = searchContactsByPrefix(&command[3]);
+      if (curr_recipient) {
+        Serial.printf("   Recipient %s now selected.\n", curr_recipient->name);
+      } else {
+        Serial.println("   Error: Name prefix not found.");
+      }
+    } else if (strcmp(command, "to") == 0) {    // show current recipient
+      if (curr_recipient) {
+         Serial.printf("   Current: %s\n", curr_recipient->name);
+      } else {
+         Serial.println("   Err: no recipient selected");
+      }
+    } else if (strcmp(command, "advert") == 0) {
+      auto pkt = createSelfAdvert(self_name);
+      if (pkt) {
+        sendZeroHop(pkt);
+        Serial.println("   (advert sent, zero hop).");
+      } else {
+        Serial.println("   ERR: unable to send");
+      }
+    } else if (strcmp(command, "reset path") == 0) {
+      if (curr_recipient) {
+        resetPathTo(*curr_recipient);
+        saveContacts();
+        Serial.println("   Done.");
+      }
+    } else if (memcmp(command, "help", 4) == 0) {
+      Serial.printf("Hello %s, Commands:\n", self_name);
+      Serial.println("   name <your name>");
+      Serial.println("   clock");
+      Serial.println("   list {n}");
+      Serial.println("   to <recipient name or prefix>");
+      Serial.println("   to");
+      Serial.println("   send <text>");
+      Serial.println("   advert");
+      Serial.println("   reset path");
     } else {
-      Serial.println("   ERROR: unable to create packet.");
+      Serial.print("   ERROR: unknown command: "); Serial.println(command);
+    }
+  }
+
+  void loop() {
+    BaseChatMesh::loop();
+
+    int len = strlen(command);
+    while (Serial.available() && len < sizeof(command)-1) {
+      char c = Serial.read();
+      if (c != '\n') { 
+        command[len++] = c;
+        command[len] = 0;
+      }
+      Serial.print(c);
+    }
+    if (len == sizeof(command)-1) {  // command buffer full
+      command[sizeof(command)-1] = '\r';
+    }
+
+    if (len > 0 && command[len - 1] == '\r') {  // received complete line
+      command[len - 1] = 0;  // replace newline with C string null terminator
+
+      handleCommand(command);
+      command[0] = 0;  // reset command buffer
     }
   }
 };
@@ -298,8 +358,6 @@ MyMesh the_mesh(*new WRAPPER_CLASS(radio, board), fast_rng, *new VolatileRTCCloc
 void halt() {
   while (1) ;
 }
-
-static char command[MAX_TEXT_LEN+1];
 
 void setup() {
   Serial.begin(115200);
@@ -336,91 +394,25 @@ void setup() {
 
   fast_rng.begin(radio.random(0x7FFFFFFF));
 
-#if RUN_AS_ALICE
-  Serial.println("   --- user: Alice ---");
-  the_mesh.self_id = mesh::LocalIdentity(alice_private, alice_public);
-  the_mesh.addContact("Bob", mesh::Identity(bob_public));
+#if defined(NRF52_PLATFORM)
+  InternalFS.begin();
+  the_mesh.begin(InternalFS);
+#elif defined(ESP32)
+  SPIFFS.begin(true);
+  the_mesh.begin(SPIFFS);
 #else
-  Serial.println("   --- user: Bob ---");
-  the_mesh.self_id = mesh::LocalIdentity(bob_private, bob_public);
-  the_mesh.addContact("Alice", mesh::Identity(alice_public));
+  #error "need to define filesystem"
 #endif
-  Serial.println("Help:");
-  Serial.println("  enter 'adv' to advertise presence to mesh");
-  Serial.println("  enter 'send {message text}' to send a message");
 
-  the_mesh.begin();
-
-  command[0] = 0;
-  txt_send_timeout = 0;
+  the_mesh.showWelcome();
 
   // send out initial Advertisement to the mesh
-  the_mesh.sendSelfAdvert();
+  auto pkt = the_mesh.createSelfAdvert(the_mesh.self_name);
+  if (pkt) {
+    the_mesh.sendFlood(pkt, 1200);    // add slight delay
+  }
 }
 
 void loop() {
-  int len = strlen(command);
-  while (Serial.available() && len < sizeof(command)-1) {
-    char c = Serial.read();
-    if (c != '\n') { 
-      command[len++] = c;
-      command[len] = 0;
-    }
-    Serial.print(c);
-  }
-  if (len == sizeof(command)-1) {  // command buffer full
-    command[sizeof(command)-1] = '\r';
-  }
-
-  if (len > 0 && command[len - 1] == '\r') {  // received complete line
-    command[len - 1] = 0;  // replace newline with C string null terminator
-
-    if (memcmp(command, "send ", 5) == 0) {
-      // TODO: some way to select recipient??
-      ContactInfo& recipient = the_mesh.contacts[curr_contact_idx];
-
-      const char *text = &command[5];
-      mesh::Packet* pkt = the_mesh.composeMsgPacket(recipient, 0, text);
-      if (pkt) {
-        uint32_t t = radio.getTimeOnAir(pkt->payload_len + pkt->path_len + 2) / 1000;
-
-        if (recipient.out_path_len < 0) {
-          the_mesh.sendFlood(pkt);
-          txt_send_timeout = the_mesh.futureMillis(SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * t));
-          Serial.printf("   (message sent - FLOOD, t=%d)\n", t);
-        } else {
-          the_mesh.sendDirect(pkt, recipient.out_path, recipient.out_path_len);
-
-          txt_send_timeout = the_mesh.futureMillis(SEND_TIMEOUT_BASE_MILLIS + 
-                     ( (t*DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) * (recipient.out_path_len + 1)));
-
-          Serial.printf("   (message sent - DIRECT, t=%d)\n", t);
-        }
-      } else {
-        Serial.println("   ERROR: unable to create packet.");
-      }
-    } else if (strcmp(command, "adv") == 0) {
-      the_mesh.sendSelfAdvert();
-    } else if (strcmp(command, "key") == 0) {
-      mesh::LocalIdentity new_id(the_mesh.getRNG());
-      new_id.printTo(Serial);
-    } else {
-      Serial.print("   ERROR: unknown command: "); Serial.println(command);
-    }
-
-    command[0] = 0;  // reset command buffer
-  }
-
-  if (txt_send_timeout && the_mesh.millisHasNowPassed(txt_send_timeout)) {
-    // failed to get an ACK
-    ContactInfo& recipient = the_mesh.contacts[curr_contact_idx];
-    Serial.println("   ERROR: timed out, no ACK.");
-
-    // path to our contact is now possibly broken, fallback to Flood mode
-    recipient.out_path_len = -1;
-
-    txt_send_timeout = 0;
-  }
-
   the_mesh.loop();
 }

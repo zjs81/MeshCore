@@ -51,3 +51,31 @@
       _valid = true;
     }
   }
+
+#include <Arduino.h>
+
+void AdvertTimeHelper::formatRelativeTimeDiff(char dest[], int32_t seconds_from_now, bool short_fmt) {
+  const char *suffix;
+  if (seconds_from_now < 0) {
+    suffix = short_fmt ? "" : " ago";
+    seconds_from_now = -seconds_from_now;
+  } else {
+    suffix = short_fmt ? "" : " from now";
+  }
+
+  if (seconds_from_now < 60) {
+    sprintf(dest, "%d secs %s", seconds_from_now, suffix);
+  } else {
+    int32_t mins = seconds_from_now / 60;
+    if (mins < 60) {
+      sprintf(dest, "%d mins %s", mins, suffix);
+    } else {
+      int32_t hours = mins / 60;
+      if (hours < 24) {
+        sprintf(dest, "%d hours %s", hours, suffix);
+      } else {
+        sprintf(dest, "%d days %s", hours / 24, suffix);
+      }
+    }
+  }
+}
