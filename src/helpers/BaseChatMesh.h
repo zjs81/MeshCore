@@ -48,7 +48,7 @@ class BaseChatMesh : public mesh::Mesh {
   int sort_array[MAX_CONTACTS];
   int matching_peer_indexes[MAX_SEARCH_RESULTS];
   unsigned long txt_send_timeout;
-  mesh::GroupChannel channels[MAX_CHANNELS];
+  mesh::GroupChannel channels[MAX_GROUP_CHANNELS];
   int num_channels;
 
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint8_t attempt, const char *text, uint32_t& expected_ack);

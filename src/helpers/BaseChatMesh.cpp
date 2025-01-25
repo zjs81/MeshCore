@@ -267,7 +267,7 @@ bool BaseChatMesh::addContact(const ContactInfo& contact) {
 }
 
 mesh::GroupChannel* BaseChatMesh::addChannel(const char* psk_base64) {
-  if (num_channels < MAX_CHANNELS) {
+  if (num_channels < MAX_GROUP_CHANNELS) {
     auto dest = &channels[num_channels];
 
     memset(dest->secret, 0, sizeof(dest->secret));
