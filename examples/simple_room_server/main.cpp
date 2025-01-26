@@ -14,6 +14,7 @@
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/TxtDataHelpers.h>
 #include <RTClib.h>
 
 /* ------------------------------ Config -------------------------------- */
@@ -171,22 +172,13 @@ class MyMesh : public mesh::Mesh {
     next_push = futureMillis(PUSH_NOTIFY_DELAY_MILLIS);
   }
 
-  void handleCommand(ClientInfo* client, const char* command, char reply[]) {
-    if (*command == '+') {
-      addPost(client, &command[1], reply);
-    } else {
-      strcpy(reply, "?");       // unknown command
-    }
-  }
-
   void pushPostToClient(ClientInfo* client, PostInfo& post) {
     int len = 0;
     memcpy(&reply_data[len], &post.post_timestamp, 4); len += 4;   // this is a PAST timestamp... but should be accepted by client
-    reply_data[len++] = 0;  // plain text
+    reply_data[len++] = (TXT_TYPE_SIGNED_PLAIN << 2);  // 'signed' plain text
 
-    // encode prefix of post.author.pub_key (in hex)
-    mesh::Utils::toHex((char *) &reply_data[len], post.author.pub_key, 4); len += 8;   // just first 4 bytes (8 hex chars)
-    reply_data[len++] = ':';
+    // encode prefix of post.author.pub_key
+    memcpy(&reply_data[len], post.author.pub_key, 4); len += 4;   // just first 4 bytes
 
     int text_len = strlen(post.text);
     memcpy(&reply_data[len], post.text, text_len); len += text_len;
@@ -324,10 +316,10 @@ protected:
     if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command
       uint32_t sender_timestamp;
       memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
-      uint flags = data[4];   // message attempt number, and other flags
+      uint flags = (data[4] >> 2);   // message attempt number, and other flags
 
-      if (flags != 0) {
-        MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported command type received: flags=%02x", (uint32_t)flags);
+      if (!(flags == TXT_TYPE_PLAIN || flags == TXT_TYPE_CLI_DATA)) {
+        MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported command flags received: flags=%02x", (uint32_t)flags);
       } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
         client->last_timestamp = sender_timestamp;
 
@@ -350,12 +342,14 @@ protected:
         }
 
         uint8_t temp[166];
-        if (client->is_admin) {
-          if (!handleAdminCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5])) {
-            handleCommand(client, (const char *) &data[5], (char *) &temp[5]);
+        if (flags == TXT_TYPE_CLI_DATA) {
+          if (client->is_admin) {
+            handleAdminCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+          } else {
+            strcpy((char *) &temp[5], "auth-err");
           }
-        } else {
-          handleCommand(client, (const char *) &data[5], (char *) &temp[5]);
+        } else {   // TXT_TYPE_PLAIN
+          addPost(client, (const char *) &data[5], (char *) &temp[5]);
         }
 
         int text_len = strlen((char *) &temp[5]);
@@ -365,7 +359,7 @@ protected:
             now++;
           }
           memcpy(temp, &now, 4);   // mostly an extra blob to help make packet_hash unique
-          temp[4] = 0;  // attempt and flags
+          temp[4] = (TXT_TYPE_PLAIN << 2);  // attempt and flags
 
           // calc expected ACK reply
           //mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
@@ -441,7 +435,7 @@ public:
     }
   }
 
-  bool handleAdminCommand(uint32_t sender_timestamp, const char* command, char reply[]) {
+  void handleAdminCommand(uint32_t sender_timestamp, const char* command, char reply[]) {
     while (*command == ' ') command++;   // skip leading spaces
 
     if (memcmp(command, "reboot", 6) == 0) {
@@ -471,11 +465,8 @@ public:
     } else if (memcmp(command, "ver", 3) == 0) {
       strcpy(reply, FIRMWARE_VER_TEXT);
     } else {
-      // unknown command
-      reply[0] = 0;
-      return false;
+      strcpy(reply, "?");   // unknown command
     }
-    return true;
   }
 
   void loop() {

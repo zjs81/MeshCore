@@ -68,9 +68,17 @@
   #error "need to provide a 'board' object"
 #endif
 
-/* -------------------------------------------------------------------------------------- */
+// Believe it or not, this std C function is busted on some platforms!
+static uint32_t _atoi(const char* sp) {
+  uint32_t n = 0;
+  while (*sp && *sp >= '0' && *sp <= '9') {
+    n *= 10;
+    n += (*sp++ - '0');
+  }
+  return n;
+}
 
-static int curr_contact_idx = 0;
+/* -------------------------------------------------------------------------------------- */
 
 class MyMesh : public BaseChatMesh, ContactVisitor {
   FILESYSTEM* _fs;
@@ -148,6 +156,16 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
     }
   }
 
+  void setClock(uint32_t timestamp) {
+    uint32_t curr = getRTCClock()->getCurrentTime();
+    if (timestamp > curr) {
+      getRTCClock()->setCurrentTime(timestamp);
+      Serial.println("   (OK - clock set!)");
+    } else {
+      Serial.println("   (ERR: clock cannot go backwards)");
+    }
+  }
+
 protected:
   void onDiscoveredContact(ContactInfo& contact, bool is_new) override {
     // TODO: if not in favs,  prompt to add as fav(?)
@@ -183,13 +201,7 @@ protected:
     Serial.printf("   %s\n", text);
 
     if (strcmp(text, "clock sync") == 0) {  // special text command
-      uint32_t curr = getRTCClock()->getCurrentTime();
-      if (sender_timestamp > curr) {
-        getRTCClock()->setCurrentTime(sender_timestamp + 1);
-        Serial.println("   (OK - clock set!)");
-      } else {
-        Serial.println("   (ERR: clock cannot go backwards)");
-      }
+      setClock(sender_timestamp + 1);
     }
   }
 
@@ -305,6 +317,9 @@ public:
       self_name[sizeof(self_name)-1] = 0;
       IdentityStore store(*_fs, "/identity");       // update IdentityStore
       store.save("_main", self_id, self_name);
+    } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
+      uint32_t secs = _atoi(&command[5]);
+      setClock(secs);
     } else if (memcmp(command, "to ", 3) == 0) {  // set current recipient
       curr_recipient = searchContactsByPrefix(&command[3]);
       if (curr_recipient) {
@@ -336,6 +351,7 @@ public:
       Serial.printf("Hello %s, Commands:\n", self_name);
       Serial.println("   name <your name>");
       Serial.println("   clock");
+      Serial.println("   time <epoch-seconds>");
       Serial.println("   list {n}");
       Serial.println("   to <recipient name or prefix>");
       Serial.println("   to");

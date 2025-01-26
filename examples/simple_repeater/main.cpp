@@ -14,6 +14,7 @@
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/TxtDataHelpers.h>
 #include <RTClib.h>
 
 /* ------------------------------ Config -------------------------------- */
@@ -271,10 +272,10 @@ protected:
     } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command
       uint32_t sender_timestamp;
       memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
-      uint flags = data[4];   // message attempt number, and other flags
+      uint flags = (data[4] >> 2);   // message attempt number, and other flags
 
-      if (flags != 0) {
-        MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported CLI text received: flags=%02x", (uint32_t)flags);
+      if (!(flags == TXT_TYPE_PLAIN || flags == TXT_TYPE_CLI_DATA)) {
+        MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported text type received: flags=%02x", (uint32_t)flags);
       } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
         client->last_timestamp = sender_timestamp;
 
@@ -303,7 +304,7 @@ protected:
             timestamp++;
           }
           memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-          temp[4] = 0;
+          temp[4] = (TXT_TYPE_PLAIN << 2);   // TODO: change this to TXT_TYPE_CLI_DATA soon
 
           // calc expected ACK reply
           //mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);

@@ -46,7 +46,6 @@
       if (nlen > 0) {
         memcpy(_name, &app_data[i], nlen);
         _name[nlen] = 0;  // set null terminator
-  MESH_DEBUG_PRINTLN("AdvertDataParser: _flags=%u, _name=%s", (uint32_t)_flags, _name);
       }
       _valid = true;
     }
