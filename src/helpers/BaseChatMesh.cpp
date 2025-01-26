@@ -1,5 +1,4 @@
 #include <helpers/BaseChatMesh.h>
-#include <base64.hpp>
 #include <Utils.h>
 
 mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name) {
@@ -152,6 +151,7 @@ void BaseChatMesh::onAckRecv(mesh::Packet* packet, uint32_t ack_crc) {
   }
 }
 
+#ifdef MAX_GROUP_CHANNELS
 int BaseChatMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[], int max_matches) {
   int n = 0;
   for (int i = 0; i < num_channels && n < max_matches; i++) {
@@ -161,6 +161,7 @@ int BaseChatMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel d
   }
   return n;
 }
+#endif
 
 void BaseChatMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) {
   uint8_t txt_type = data[4];
@@ -266,6 +267,9 @@ bool BaseChatMesh::addContact(const ContactInfo& contact) {
   return false;
 }
 
+#ifdef MAX_GROUP_CHANNELS
+#include <base64.hpp>
+
 mesh::GroupChannel* BaseChatMesh::addChannel(const char* psk_base64) {
   if (num_channels < MAX_GROUP_CHANNELS) {
     auto dest = &channels[num_channels];
@@ -280,6 +284,11 @@ mesh::GroupChannel* BaseChatMesh::addChannel(const char* psk_base64) {
   }
   return NULL;
 }
+#else
+mesh::GroupChannel* BaseChatMesh::addChannel(const char* psk_base64) {
+  return NULL;  // not supported
+}
+#endif
 
 bool ContactsIterator::hasNext(const BaseChatMesh* mesh, ContactInfo& dest) {
   if (next_idx >= mesh->num_contacts) return false;

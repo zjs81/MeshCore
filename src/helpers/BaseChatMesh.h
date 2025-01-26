@@ -36,6 +36,10 @@ public:
   bool hasNext(const BaseChatMesh* mesh, ContactInfo& dest);
 };
 
+#ifndef MAX_CONTACTS
+  #define MAX_CONTACTS  32
+#endif
+
 /**
  *  \brief  abstract Mesh class for common 'chat' client
  */
@@ -48,8 +52,10 @@ class BaseChatMesh : public mesh::Mesh {
   int sort_array[MAX_CONTACTS];
   int matching_peer_indexes[MAX_SEARCH_RESULTS];
   unsigned long txt_send_timeout;
+#ifdef MAX_GROUP_CHANNELS
   mesh::GroupChannel channels[MAX_GROUP_CHANNELS];
   int num_channels;
+#endif
 
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint8_t attempt, const char *text, uint32_t& expected_ack);
 
@@ -58,7 +64,9 @@ protected:
       : mesh::Mesh(radio, ms, rng, rtc, mgr, tables)
   { 
     num_contacts = 0;
+  #ifdef MAX_GROUP_CHANNELS
     num_channels = 0;
+  #endif
     txt_send_timeout = 0;
   }
 
@@ -79,7 +87,9 @@ protected:
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
   bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override;
+#ifdef MAX_GROUP_CHANNELS
   int searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel channels[], int max_matches) override;
+#endif
   void onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) override;
 
 public:

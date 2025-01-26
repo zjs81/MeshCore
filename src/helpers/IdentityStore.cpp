@@ -23,7 +23,8 @@ bool IdentityStore::load(const char *name, mesh::LocalIdentity& id, char display
     if (file) {
       loaded = id.readFrom(file);
 
-      int n = min(32, max_name_sz);   // up to 32 bytes
+      int n = max_name_sz;   // up to 32 bytes
+      if (n > 32) n = 32;
       file.read((uint8_t *) display_name, n);
       display_name[n - 1] = 0;  // ensure null terminator
 
