@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v1 (build: 24 Jan 2025)"
+#define FIRMWARE_VER_TEXT   "v2 (build: 27 Jan 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0

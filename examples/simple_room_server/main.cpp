@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v1 (build: 24 Jan 2025)"
+#define FIRMWARE_VER_TEXT   "v2 (build: 27 Jan 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -489,15 +489,19 @@ public:
       // check next Round-Robin client, and sync next new post
       auto client = &known_clients[next_client_idx];
       if (client->pending_ack == 0 && client->last_activity != 0) {  // not already waiting for ACK, AND not evicted
+        MESH_DEBUG_PRINTLN("loop - checking for client %02X", (uint32_t) client->id.pub_key[0]);
         for (int k = 0, idx = next_post_idx; k < MAX_UNSYNCED_POSTS; k++) {
           if (posts[idx].post_timestamp > client->sync_since   // is new post for this Client?
             && !posts[idx].author.matches(client->id)) {    // don't push posts to the author
             // push this post to Client, then wait for ACK
             pushPostToClient(client, posts[idx]);
+            MESH_DEBUG_PRINTLN("loop - pushed to client %02X: %s", (uint32_t) client->id.pub_key[0], posts[idx].text);
             break;
           }
           idx = (idx + 1) % MAX_UNSYNCED_POSTS;   // wrap to start of cyclic queue
         }
+      } else {
+        MESH_DEBUG_PRINTLN("loop - skipping busy (or evicted) client %02X", (uint32_t) client->id.pub_key[0]);
       }
       next_client_idx = (next_client_idx + 1) % num_clients;  // round robin polling for each client
 
