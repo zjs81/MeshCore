@@ -453,7 +453,7 @@ public:
         savePrefs();
         strcpy(reply, "OK");
       } else {
-        sprintf(reply, "unknown config: %s", &command[4]);
+        sprintf(reply, "unknown config: %s", config);
       }
     } else if (memcmp(command, "ver", 3) == 0) {
       strcpy(reply, FIRMWARE_VER_TEXT);

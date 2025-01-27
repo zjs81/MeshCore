@@ -42,6 +42,11 @@ public:
     adcAttachPin(PIN_VBAT_READ);
     analogReadResolution(10);
     pinMode(PIN_ADC_CTRL, OUTPUT);
+
+  #ifdef P_LORA_TX_LED
+    pinMode(P_LORA_TX_LED, OUTPUT);
+    digitalWrite(P_LORA_TX_LED, LOW);
+  #endif
   }
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn = -1) {
@@ -66,6 +71,15 @@ public:
     // Finally set ESP32 into sleep
     esp_deep_sleep_start();   // CPU halts here and never returns!
   }
+
+#if defined(P_LORA_TX_LED)
+  void onBeforeTransmit() override {
+    digitalWrite(P_LORA_TX_LED, HIGH);   // turn TX LED on
+  }
+  void onAfterTransmit() override {
+    digitalWrite(P_LORA_TX_LED, LOW);   // turn TX LED off
+  }
+#endif
 
   uint16_t getBattMilliVolts() override {
     digitalWrite(PIN_ADC_CTRL, PIN_ADC_CTRL_ACTIVE);
