@@ -48,7 +48,7 @@
 #endif
 
 #ifndef ADMIN_PASSWORD
-  #define  ADMIN_PASSWORD  "h^(kl@#)"
+  #define  ADMIN_PASSWORD  "password"
 #endif
 
 #if defined(HELTEC_LORA_V3)
@@ -103,9 +103,17 @@ struct ClientInfo {
 // NOTE: need to space the ACK and the reply text apart (in CLI)
 #define CLI_REPLY_DELAY_MILLIS  1500
 
+struct NodePrefs {  // persisted to file
+  float airtime_factor;
+  char node_name[32];
+  double node_lat, node_lon;
+  char password[16];
+};
+
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
-  float airtime_factor;
+  FILESYSTEM* _fs;
+  NodePrefs _prefs;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
   ClientInfo known_clients[MAX_CLIENTS];
@@ -164,7 +172,7 @@ class MyMesh : public mesh::Mesh {
 
 protected:
   float getAirtimeBudgetFactor() const override {
-    return airtime_factor;
+    return _prefs.airtime_factor;
   }
 
   bool allowPacketForward(const mesh::Packet* packet) override {
@@ -176,7 +184,7 @@ protected:
       uint32_t timestamp;
       memcpy(&timestamp, data, 4);
 
-      if (memcmp(&data[4], ADMIN_PASSWORD, strlen(ADMIN_PASSWORD)) == 0) {  // check for valid password
+      if (memcmp(&data[4], _prefs.password, strlen(_prefs.password)) == 0) {  // check for valid password
         auto client = putClient(sender);  // add to known clients (if not already known)
         if (client == NULL || timestamp <= client->last_timestamp) {
           MESH_DEBUG_PRINTLN("Client table full, or replay attack!");
@@ -345,15 +353,49 @@ public:
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     my_radio = &radio;
-    airtime_factor = 1.0;    // one half
     num_clients = 0;
+
+    // defaults
+    _prefs.airtime_factor = 1.0;    // one half
+    strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
+    _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
+    _prefs.node_lat = ADVERT_LAT;
+    _prefs.node_lon = ADVERT_LON;
+    strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password)-1);
+    _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
+  }
+
+  void begin(FILESYSTEM* fs) {
+    mesh::Mesh::begin();
+    _fs = fs;
+    // load persisted prefs
+    if (_fs->exists("/node_prefs")) {
+      File file = _fs->open("/node_prefs");
+      if (file) {
+        file.read((uint8_t *) &_prefs, sizeof(_prefs));
+        file.close();
+      }
+    }
+  }
+
+  void savePrefs() {
+#if defined(NRF52_PLATFORM)
+    File file = _fs->open("/node_prefs", FILE_O_WRITE);
+    if (file) { file.seek(0); file.truncate(); }
+#else
+    File file = _fs->open("/node_prefs", "w", true);
+#endif
+    if (file) {
+      file.write((const uint8_t *)&_prefs, sizeof(_prefs));
+      file.close();
+    }
   }
 
   void sendSelfAdvertisement() {
     uint8_t app_data[MAX_ADVERT_DATA_SIZE];
     uint8_t app_data_len;
     {
-      AdvertDataBuilder builder(ADV_TYPE_REPEATER, ADVERT_NAME, ADVERT_LAT, ADVERT_LON);
+      AdvertDataBuilder builder(ADV_TYPE_REPEATER, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
       app_data_len = builder.encodeTo(app_data);
     }
 
@@ -385,9 +427,30 @@ public:
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
       sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+    } else if (memcmp(command, "password ", 9) == 0) {
+      // change admin password
+      strncpy(_prefs.password, &command[9], sizeof(_prefs.password)-1);
+      _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necesary
+      savePrefs();
+      sprintf(reply, "password now: %s", _prefs.password);   // echo back just to let admin know for sure!!
     } else if (memcmp(command, "set ", 4) == 0) {
-      if (memcmp(&command[4], "AF", 2) == 0 || memcmp(&command[4], "af=", 2) == 0) {
-        airtime_factor = atof(&command[7]);
+      const char* config = &command[4];
+      if (memcmp(config, "af ", 3) == 0) {
+        _prefs.airtime_factor = atof(&config[3]);
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (memcmp(config, "name ", 5) == 0) {
+        strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
+        _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (memcmp(config, "lat ", 4) == 0) {
+        _prefs.node_lat = atof(&config[4]);
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (memcmp(config, "lon ", 4) == 0) {
+        _prefs.node_lon = atof(&config[4]);
+        savePrefs();
         strcpy(reply, "OK");
       } else {
         sprintf(reply, "unknown config: %s", &command[4]);
@@ -464,11 +527,14 @@ void setup() {
   radio.setDio2AsRfSwitch(SX126X_DIO2_AS_RF_SWITCH);
 #endif
 
+  FILESYSTEM* fs;
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
+  fs = &InternalFS;
   IdentityStore store(InternalFS, "/identity");
 #elif defined(ESP32)
   SPIFFS.begin(true);
+  fs = &SPIFFS;
   IdentityStore store(SPIFFS, "/identity");
 #else
   #error "need to define filesystem"
@@ -483,7 +549,7 @@ void setup() {
 
   command[0] = 0;
 
-  the_mesh.begin();
+  the_mesh.begin(fs);
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement();
