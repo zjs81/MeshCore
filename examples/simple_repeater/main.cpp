@@ -74,6 +74,16 @@
 
 /* ------------------------------ Code -------------------------------- */
 
+// Believe it or not, this std C function is busted on some platforms!
+static uint32_t _atoi(const char* sp) {
+  uint32_t n = 0;
+  while (*sp && *sp >= '0' && *sp <= '9') {
+    n *= 10;
+    n += (*sp++ - '0');
+  }
+  return n;
+}
+
 #define CMD_GET_STATS      0x01
 
 struct RepeaterStats {
@@ -108,6 +118,7 @@ struct NodePrefs {  // persisted to file
   char node_name[32];
   double node_lat, node_lon;
   char password[16];
+  float freq;
 };
 
 class MyMesh : public mesh::Mesh {
@@ -363,7 +374,10 @@ public:
     _prefs.node_lon = ADVERT_LON;
     strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password)-1);
     _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
+    _prefs.freq = LORA_FREQ;
   }
+
+  float getFreqPref() const { return _prefs.freq; }
 
   void begin(FILESYSTEM* fs) {
     mesh::Mesh::begin();
@@ -427,6 +441,15 @@ public:
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
       sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
+    } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
+      uint32_t secs = _atoi(&command[5]);
+      uint32_t curr = getRTCClock()->getCurrentTime();
+      if (secs > curr) {
+        getRTCClock()->setCurrentTime(secs);
+        strcpy(reply, "(OK - clock set!)");
+      } else {
+        strcpy(reply, "(ERR: clock cannot go backwards)");
+      }
     } else if (memcmp(command, "password ", 9) == 0) {
       // change admin password
       strncpy(_prefs.password, &command[9], sizeof(_prefs.password)-1);
@@ -452,6 +475,10 @@ public:
         _prefs.node_lon = atof(&config[4]);
         savePrefs();
         strcpy(reply, "OK");
+      } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
+        _prefs.freq = atof(&config[5]);
+        savePrefs();
+        strcpy(reply, "OK - reboot to apply");
       } else {
         sprintf(reply, "unknown config: %s", config);
       }
@@ -550,6 +577,10 @@ void setup() {
   command[0] = 0;
 
   the_mesh.begin(fs);
+
+  if (LORA_FREQ != the_mesh.getFreqPref()) {
+    radio.setFrequency(the_mesh.getFreqPref());
+  }
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement();

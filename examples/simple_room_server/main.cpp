@@ -83,6 +83,16 @@
 
 /* ------------------------------ Code -------------------------------- */
 
+// Believe it or not, this std C function is busted on some platforms!
+static uint32_t _atoi(const char* sp) {
+  uint32_t n = 0;
+  while (*sp && *sp >= '0' && *sp <= '9') {
+    n *= 10;
+    n += (*sp++ - '0');
+  }
+  return n;
+}
+
 struct ClientInfo {
   mesh::Identity id;
   uint32_t last_timestamp;  // by THEIR clock
@@ -114,9 +124,18 @@ struct PostInfo {
 #define PUSH_TIMEOUT_BASE          4000
 #define PUSH_ACK_TIMEOUT_FACTOR    2000
 
+struct NodePrefs {  // persisted to file
+  float airtime_factor;
+  char node_name[32];
+  double node_lat, node_lon;
+  char password[16];
+  float freq;
+};
+
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
-  float airtime_factor;
+  FILESYSTEM* _fs;
+  NodePrefs _prefs;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
   ClientInfo known_clients[MAX_CLIENTS];
@@ -217,7 +236,7 @@ class MyMesh : public mesh::Mesh {
 
 protected:
   float getAirtimeBudgetFactor() const override {
-    return airtime_factor;
+    return _prefs.airtime_factor;
   }
 
 #if ROOM_IS_ALSO_REPEATER
@@ -233,7 +252,7 @@ protected:
       memcpy(&sender_sync_since, &data[4], 4);  // sender's "sync messags SINCE x" timestamp
 
       bool is_admin;
-      if (memcmp(&data[8], ADMIN_PASSWORD, strlen(ADMIN_PASSWORD)) == 0) {  // check for valid admin password
+      if (memcmp(&data[8], _prefs.password, strlen(_prefs.password)) == 0) {  // check for valid admin password
         is_admin = true;
       } else {
         is_admin = false;
@@ -411,7 +430,17 @@ public:
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     my_radio = &radio;
-    airtime_factor = 1.0;    // one half
+
+    // defaults
+    _prefs.airtime_factor = 1.0;    // one half
+    strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
+    _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
+    _prefs.node_lat = ADVERT_LAT;
+    _prefs.node_lon = ADVERT_LON;
+    strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password)-1);
+    _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
+    _prefs.freq = LORA_FREQ;
+
     num_clients = 0;
     next_post_idx = 0;
     next_client_idx = 0;
@@ -419,11 +448,39 @@ public:
     memset(posts, 0, sizeof(posts));
   }
 
+  float getFreqPref() const { return _prefs.freq; }
+
+  void begin(FILESYSTEM* fs) {
+    mesh::Mesh::begin();
+    _fs = fs;
+    // load persisted prefs
+    if (_fs->exists("/node_prefs")) {
+      File file = _fs->open("/node_prefs");
+      if (file) {
+        file.read((uint8_t *) &_prefs, sizeof(_prefs));
+        file.close();
+      }
+    }
+  }
+
+  void savePrefs() {
+#if defined(NRF52_PLATFORM)
+    File file = _fs->open("/node_prefs", FILE_O_WRITE);
+    if (file) { file.seek(0); file.truncate(); }
+#else
+    File file = _fs->open("/node_prefs", "w", true);
+#endif
+    if (file) {
+      file.write((const uint8_t *)&_prefs, sizeof(_prefs));
+      file.close();
+    }
+  }
+
   void sendSelfAdvertisement() {
     uint8_t app_data[MAX_ADVERT_DATA_SIZE];
     uint8_t app_data_len;
     {
-      AdvertDataBuilder builder(ADV_TYPE_ROOM, ADVERT_NAME, ADVERT_LAT, ADVERT_LON);
+      AdvertDataBuilder builder(ADV_TYPE_ROOM, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
       app_data_len = builder.encodeTo(app_data);
     }
 
@@ -455,12 +512,46 @@ public:
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
       sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
-    } else if (memcmp(command, "set ", 4) == 0) {
-      if (memcmp(&command[4], "AF", 2) == 0 || memcmp(&command[4], "af=", 2) == 0) {
-        airtime_factor = atof(&command[7]);
-        strcpy(reply, "OK");
+    } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
+      uint32_t secs = _atoi(&command[5]);
+      uint32_t curr = getRTCClock()->getCurrentTime();
+      if (secs > curr) {
+        getRTCClock()->setCurrentTime(secs);
+        strcpy(reply, "(OK - clock set!)");
       } else {
-        sprintf(reply, "unknown config: %s", &command[4]);
+        strcpy(reply, "(ERR: clock cannot go backwards)");
+      }
+    } else if (memcmp(command, "password ", 9) == 0) {
+      // change admin password
+      strncpy(_prefs.password, &command[9], sizeof(_prefs.password)-1);
+      _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necesary
+      savePrefs();
+      sprintf(reply, "password now: %s", _prefs.password);   // echo back just to let admin know for sure!!
+    } else if (memcmp(command, "set ", 4) == 0) {
+      const char* config = &command[4];
+      if (memcmp(config, "af ", 3) == 0) {
+        _prefs.airtime_factor = atof(&config[3]);
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (memcmp(config, "name ", 5) == 0) {
+        strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
+        _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (memcmp(config, "lat ", 4) == 0) {
+        _prefs.node_lat = atof(&config[4]);
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (memcmp(config, "lon ", 4) == 0) {
+        _prefs.node_lon = atof(&config[4]);
+        savePrefs();
+        strcpy(reply, "OK");
+      } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
+        _prefs.freq = atof(&config[5]);
+        savePrefs();
+        strcpy(reply, "OK - reboot to apply");
+      } else {
+        sprintf(reply, "unknown config: %s", config);
       }
     } else if (memcmp(command, "ver", 3) == 0) {
       strcpy(reply, FIRMWARE_VER_TEXT);
@@ -576,11 +667,14 @@ void setup() {
   radio.setDio2AsRfSwitch(SX126X_DIO2_AS_RF_SWITCH);
 #endif
 
+  FILESYSTEM* fs;
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
+  fs = &InternalFS;
   IdentityStore store(InternalFS, "/identity");
 #elif defined(ESP32)
   SPIFFS.begin(true);
+  fs = &SPIFFS;
   IdentityStore store(SPIFFS, "/identity");
 #else
   #error "need to define filesystem"
@@ -595,7 +689,11 @@ void setup() {
 
   command[0] = 0;
 
-  the_mesh.begin();
+  the_mesh.begin(fs);
+
+  if (LORA_FREQ != the_mesh.getFreqPref()) {
+    radio.setFrequency(the_mesh.getFreqPref());
+  }
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement();
