@@ -100,7 +100,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_SELF_INFO         5   // reply to CMD_APP_START
 #define RESP_CODE_SENT              6   // reply to CMD_SEND_TXT_MSG
 #define RESP_CODE_CONTACT_MSG_RECV  7   // a reply to CMD_SYNC_NEXT_MESSAGE
-#define RESP_CODE_GROUP_MSG_RECV    8   // a reply to CMD_SYNC_NEXT_MESSAGE
+#define RESP_CODE_CHANNEL_MSG_RECV  8   // a reply to CMD_SYNC_NEXT_MESSAGE
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -110,7 +110,7 @@ static uint32_t _atoi(const char* sp) {
 
 /* -------------------------------------------------------------------------------------- */
 
-class MyMesh : public BaseChatMesh, ContactVisitor {
+class MyMesh : public BaseChatMesh {
   FILESYSTEM* _fs;
   uint32_t expected_ack_crc;  // TODO: keep table of expected ACKs
   mesh::GroupChannel* _public;
@@ -293,7 +293,7 @@ protected:
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) override {
     int i = 0;
-    out_frame[i++] = RESP_CODE_GROUP_MSG_RECV;
+    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
     out_frame[i++] = in_path_len < 0 ? 0xFF : in_path_len;
     out_frame[i++] = TXT_TYPE_PLAIN;
     memcpy(&out_frame[i], &timestamp, 4); i += 4;
@@ -349,15 +349,6 @@ public:
 
     loadContacts();
     _public = addChannel(PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
-  }
-
-  // ContactVisitor
-  void onContactVisit(const ContactInfo& contact) override {
-    Serial.printf("   %s - ", contact.name);
-    char tmp[40];
-    int32_t secs = contact.last_advert_timestamp - getRTCClock()->getCurrentTime();
-    AdvertTimeHelper::formatRelativeTimeDiff(tmp, secs, false);
-    Serial.println(tmp);
   }
 
   void handleCmdFrame(size_t len) {
@@ -536,10 +527,15 @@ public:
 };
 
 #ifdef ESP32
-#include <helpers/esp32/SerialBLEInterface.h>
-SerialBLEInterface serial_interface;
+  #ifdef BLE_PIN_CODE
+    #include <helpers/esp32/SerialBLEInterface.h>
+    SerialBLEInterface serial_interface;
+  #else
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+  #endif
 #else
-#error "need to define a serial interface"
+  #error "need to define a serial interface"
 #endif
 
 #if defined(NRF52_PLATFORM)
@@ -600,7 +596,11 @@ void setup() {
 #elif defined(ESP32)
   SPIFFS.begin(true);
 
+#ifdef BLE_PIN_CODE
   serial_interface.begin("MeshCore", BLE_PIN_CODE);
+#else
+  serial_interface.begin(Serial);
+#endif
   serial_interface.enable();
 
   the_mesh.begin(SPIFFS, serial_interface);
