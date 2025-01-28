@@ -276,7 +276,7 @@ public:
     if (memcmp(command, "send ", 5) == 0) {
       if (curr_recipient) {
         const char *text = &command[5];
-        int result = sendMessage(*curr_recipient, 0, text, expected_ack_crc);
+        int result = sendMessage(*curr_recipient, getRTCClock()->getCurrentTime(), 0, text, expected_ack_crc);
         if (result == MSG_SEND_FAILED) {
           Serial.println("   ERROR: unable to send.");
         } else {

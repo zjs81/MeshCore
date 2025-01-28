@@ -179,12 +179,11 @@ void BaseChatMesh::onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mes
   }
 }
 
-mesh::Packet* BaseChatMesh::composeMsgPacket(const ContactInfo& recipient, uint8_t attempt, const char *text, uint32_t& expected_ack) {
+mesh::Packet* BaseChatMesh::composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack) {
   int text_len = strlen(text);
   if (text_len > MAX_TEXT_LEN) return NULL;
 
   uint8_t temp[5+MAX_TEXT_LEN+1];
-  uint32_t timestamp = getRTCClock()->getCurrentTime();
   memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
   temp[4] = (attempt & 3);
   memcpy(&temp[5], text, text_len + 1);
@@ -195,8 +194,8 @@ mesh::Packet* BaseChatMesh::composeMsgPacket(const ContactInfo& recipient, uint8
   return createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
 }
 
-int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint8_t attempt, const char* text, uint32_t& expected_ack) {
-  mesh::Packet* pkt = composeMsgPacket(recipient, attempt, text, expected_ack);
+int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack) {
+  mesh::Packet* pkt = composeMsgPacket(recipient, timestamp, attempt, text, expected_ack);
   if (pkt == NULL) return MSG_SEND_FAILED;
 
   uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);

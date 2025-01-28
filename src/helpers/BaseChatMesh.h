@@ -59,7 +59,7 @@ class BaseChatMesh : public mesh::Mesh {
   int num_channels;
 #endif
 
-  mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint8_t attempt, const char *text, uint32_t& expected_ack);
+  mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack);
 
 protected:
   BaseChatMesh(mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::PacketManager& mgr, mesh::MeshTables& tables)
@@ -96,7 +96,7 @@ protected:
 
 public:
   mesh::Packet* createSelfAdvert(const char* name);
-  int  sendMessage(const ContactInfo& recipient, uint8_t attempt, const char* text, uint32_t& expected_ack);
+  int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack);
   void resetPathTo(ContactInfo& recipient);
   void scanRecentContacts(int last_n, ContactVisitor* visitor);
   ContactInfo* searchContactsByPrefix(const char* name_prefix);
