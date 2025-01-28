@@ -6,8 +6,8 @@
 class ArduinoSerialInterface : public BaseSerialInterface {
   bool _isEnabled;
   uint8_t _state;
-  uint8_t _frame_len;
-  uint8_t rx_len;
+  uint16_t _frame_len;
+  uint16_t rx_len;
   HardwareSerial* _serial;
   uint8_t rx_buf[MAX_FRAME_SIZE];
 
