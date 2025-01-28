@@ -123,8 +123,8 @@ class MyMesh : public BaseChatMesh {
   uint8_t out_frame[MAX_FRAME_SIZE+1];
 
   void loadContacts() {
-    if (_fs->exists("/contacts")) {
-      File file = _fs->open("/contacts");
+    if (_fs->exists("/contacts2")) {
+      File file = _fs->open("/contacts2");
       if (file) {
         bool full = false;
         while (!full) {
@@ -142,6 +142,7 @@ class MyMesh : public BaseChatMesh {
           success = success && (file.read((uint8_t *) &c.out_path_len, 1) == 1);
           success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
           success = success && (file.read(c.out_path, 64) == 64);
+          success = success && (file.read((uint8_t *) c.lastmod, 4) == 4);
 
           if (!success) break;  // EOF
 
@@ -155,10 +156,10 @@ class MyMesh : public BaseChatMesh {
 
   void saveContacts() {
 #if defined(NRF52_PLATFORM)
-    File file = _fs->open("/contacts", FILE_O_WRITE);
+    File file = _fs->open("/contacts2", FILE_O_WRITE);
     if (file) { file.seek(0); file.truncate(); }
 #else
-    File file = _fs->open("/contacts", "w", true);
+    File file = _fs->open("/contacts2", "w", true);
 #endif
     if (file) {
       ContactsIterator iter;
@@ -176,6 +177,7 @@ class MyMesh : public BaseChatMesh {
         success = success && (file.write((uint8_t *) &c.out_path_len, 1) == 1);
         success = success && (file.write((uint8_t *) &c.last_advert_timestamp, 4) == 4);
         success = success && (file.write(c.out_path, 64) == 64);
+        success = success && (file.write((uint8_t *) &c.lastmod, 4) == 4);
 
         if (!success) break;  // write failed
       }
@@ -479,13 +481,13 @@ public:
       ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
       if (recipient) {
         updateContactFromFrame(*recipient, cmd_frame);
-        recipient->lastmod = 0;
+        //recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
         saveContacts();
         writeOKFrame();
       } else {
         ContactInfo contact;
         updateContactFromFrame(contact, cmd_frame);
-        contact.lastmod = 0;
+        contact.lastmod = getRTCClock()->getCurrentTime();
         if (addContact(contact)) {
           saveContacts();
           writeOKFrame();
