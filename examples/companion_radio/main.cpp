@@ -534,6 +534,13 @@ public:
     #include <helpers/ArduinoSerialInterface.h>
     ArduinoSerialInterface serial_interface;
   #endif
+#elif defined(NRF52_PLATFORM)
+  #ifdef BLE_PIN_CODE
+    #error "BLE not defined yet"
+  #else
+    #include <helpers/ArduinoSerialInterface.h>
+    ArduinoSerialInterface serial_interface;
+  #endif
 #else
   #error "need to define a serial interface"
 #endif
