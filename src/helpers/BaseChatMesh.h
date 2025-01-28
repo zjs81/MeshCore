@@ -3,6 +3,7 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
 #include <helpers/AdvertDataHelpers.h>
+#include <helpers/TxtDataHelpers.h>
 
 #define MAX_TEXT_LEN    (10*CIPHER_BLOCK_SIZE)  // must be LESS than (MAX_PACKET_PAYLOAD - 4 - CIPHER_MAC_SIZE - 1)
 
@@ -13,8 +14,9 @@ struct ContactInfo {
   uint8_t flags;
   int8_t out_path_len;
   uint8_t out_path[MAX_PATH_SIZE];
-  uint32_t last_advert_timestamp;
+  uint32_t last_advert_timestamp;   // by THEIR clock
   uint8_t shared_secret[PUB_KEY_SIZE];
+  uint32_t lastmod;  // by OUR clock
 };
 
 #define MAX_SEARCH_RESULTS   8
@@ -74,7 +76,7 @@ protected:
   virtual void onDiscoveredContact(ContactInfo& contact, bool is_new) = 0;
   virtual bool processAck(const uint8_t *data) = 0;
   virtual void onContactPathUpdated(const ContactInfo& contact) = 0;
-  virtual void onMessageRecv(const ContactInfo& contact, bool was_flood, uint32_t sender_timestamp, const char *text) = 0;
+  virtual void onMessageRecv(const ContactInfo& contact, uint8_t path_len, uint32_t sender_timestamp, const char *text) = 0;
   virtual uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const = 0;
   virtual uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const = 0;
   virtual void onSendTimeout() = 0;
@@ -98,7 +100,10 @@ public:
   void resetPathTo(ContactInfo& recipient);
   void scanRecentContacts(int last_n, ContactVisitor* visitor);
   ContactInfo* searchContactsByPrefix(const char* name_prefix);
+  ContactInfo* lookupContactByPubKey(const uint8_t* pub_key, int prefix_len);
   bool  addContact(const ContactInfo& contact);
+  int getNumContacts() const { return num_contacts; }
+  ContactsIterator startContactsIterator();
   mesh::GroupChannel* addChannel(const char* psk_base64);
 
   void loop();

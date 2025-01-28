@@ -119,6 +119,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
           if (!success) break;  // EOF
 
           c.id = mesh::Identity(pub_key);
+          c.lastmod = 0;
           if (!addContact(c)) full = true;
         }
         file.close();
@@ -196,8 +197,8 @@ protected:
     return false;
   }
 
-  void onMessageRecv(const ContactInfo& from, bool was_flood, uint32_t sender_timestamp, const char *text) override {
-    Serial.printf("(%s) MSG -> from %s\n", was_flood ? "FLOOD" : "DIRECT", from.name);
+  void onMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+    Serial.printf("(%s) MSG -> from %s\n", path_len == 0xFF ? "DIRECT" : "FLOOD", from.name);
     Serial.printf("   %s\n", text);
 
     if (strcmp(text, "clock sync") == 0) {  // special text command

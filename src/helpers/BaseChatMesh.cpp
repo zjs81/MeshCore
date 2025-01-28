@@ -51,6 +51,7 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   from->name[sizeof(from->name)-1] = 0;
   from->type = parser.getType();
   from->last_advert_timestamp = timestamp;
+  from->lastmod = getRTCClock()->getCurrentTime();
 
   onDiscoveredContact(*from, is_new);       // let UI know
 }
@@ -93,8 +94,8 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
     data[len] = 0; // need to make a C string again, with null terminator
 
     //if ( ! alreadyReceived timestamp ) {
-    if ((flags >> 2) == 0) {   // plain text msg?
-      onMessageRecv(from, packet->isRouteFlood(), timestamp, (const char *) &data[5]);  // let UI know
+    if ((flags >> 2) == TXT_TYPE_PLAIN) {
+      onMessageRecv(from, packet->isRouteFlood() ? packet->path_len : 0xFF, timestamp, (const char *) &data[5]);  // let UI know
 
       uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
       mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 5 + strlen((char *)&data[5]), from.id.pub_key, PUB_KEY_SIZE);
@@ -132,6 +133,7 @@ bool BaseChatMesh::onPeerPathRecv(mesh::Packet* packet, int sender_idx, const ui
   // NOTE: for this impl, we just replace the current 'out_path' regardless, whenever sender sends us a new out_path.
   // FUTURE: could store multiple out_paths per contact, and try to find which is the 'best'(?)
   memcpy(from.out_path, path, from.out_path_len = path_len);  // store a copy of path, for sendDirect()
+  from.lastmod = getRTCClock()->getCurrentTime();
 
   onContactPathUpdated(from);
 
@@ -213,9 +215,7 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint8_t attempt, co
 }
 
 void BaseChatMesh::resetPathTo(ContactInfo& recipient) {
-  if (recipient.out_path_len >= 0) {
-    recipient.out_path_len = -1;
-  }
+  recipient.out_path_len = -1;
 }
 
 static ContactInfo* table;  // pass via global :-(
@@ -250,6 +250,14 @@ ContactInfo* BaseChatMesh::searchContactsByPrefix(const char* name_prefix) {
   for (int i = 0; i < num_contacts; i++) {
     auto c = &contacts[i];
     if (memcmp(c->name, name_prefix, len) == 0) return c;
+  }
+  return NULL;  // not found
+}
+
+ContactInfo* BaseChatMesh::lookupContactByPubKey(const uint8_t* pub_key, int prefix_len) {
+  for (int i = 0; i < num_contacts; i++) {
+    auto c = &contacts[i];
+    if (memcmp(c->id.pub_key, pub_key, prefix_len) == 0) return c;
   }
   return NULL;  // not found
 }
@@ -289,6 +297,10 @@ mesh::GroupChannel* BaseChatMesh::addChannel(const char* psk_base64) {
   return NULL;  // not supported
 }
 #endif
+
+ContactsIterator BaseChatMesh::startContactsIterator() {
+  return ContactsIterator();
+}
 
 bool ContactsIterator::hasNext(const BaseChatMesh* mesh, ContactInfo& dest) {
   if (next_idx >= mesh->num_contacts) return false;
