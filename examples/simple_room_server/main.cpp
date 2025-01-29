@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v2 (build: 27 Jan 2025)"
+#define FIRMWARE_VER_TEXT   "v3 (build: 29 Jan 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -123,6 +123,13 @@ struct PostInfo {
 #define PUSH_ACK_TIMEOUT_FLOOD    12000
 #define PUSH_TIMEOUT_BASE          4000
 #define PUSH_ACK_TIMEOUT_FACTOR    2000
+
+#define CLIENT_KEEP_ALIVE_SECS   128
+
+#define REQ_TYPE_KEEP_ALIVE   1
+
+#define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
+#define RESP_SERVER_KEEP_ALIVE    1   // response to REQ_TYPE_KEEP_ALIVE
 
 struct NodePrefs {  // persisted to file
   float airtime_factor;
@@ -282,8 +289,11 @@ protected:
 
       memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
       // TODO: maybe reply with count of messages waiting to be synced for THIS client?
-      memset(&reply_data[4], 0, 4);  // FUTURE: reserve 4 bytes 
-      memcpy(&reply_data[8], "OK", 2);
+      reply_data[4] = RESP_SERVER_LOGIN_OK;
+      reply_data[5] = (CLIENT_KEEP_ALIVE_SECS >> 4);  // NEW: recommended keep-alive interval (secs / 16)
+      reply_data[6] = 0;  // FUTURE: reserved
+      reply_data[7] = 0;  // FUTURE: reserved
+      memcpy(&reply_data[8], "OK", 2);  // REVISIT: not really needed
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
@@ -332,7 +342,7 @@ protected:
       return;
     }
     auto client = &known_clients[i];
-    if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command
+    if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command or new Post
       uint32_t sender_timestamp;
       memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
       uint flags = (data[4] >> 2);   // message attempt number, and other flags
@@ -394,6 +404,34 @@ protected:
         }
       } else {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: possible replay attack detected");
+      }
+    } else if (type == PAYLOAD_TYPE_REQ && len >= 5) {
+      uint32_t sender_timestamp;
+      memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
+      if (data[4] == REQ_TYPE_KEEP_ALIVE && packet->isRouteDirect()) {   // request type
+        if (len >= 9) {   // optional - last post_timestamp client received
+          memcpy(&client->sync_since, &data[5], 4);    // force-update the 'sync since'
+        }
+
+        uint32_t now = getRTCClock()->getCurrentTime();
+        client->last_activity = now;   // <-- THIS will keep client connection alive
+        client->push_failures = 0;  // reset so push can resume (if prev failed)
+
+        // TODO: Throttle KEEP_ALIVE requests!
+        // if client sends too quickly, evict()
+
+        // RULE: only send keep_alive response DIRECT!
+        if (client->out_path_len >= 0) {
+          uint8_t temp[8];
+          memcpy(temp, &now, 4);  // all responses start with sender timestamp
+          temp[4] = RESP_SERVER_KEEP_ALIVE;
+          memcpy(&temp[5], &client->sync_since, 4);  // let client know what server thinks is their 'since'
+
+          auto reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, temp, 9);
+          if (reply) {
+            sendDirect(reply, client->out_path, client->out_path_len);
+          }
+        }
       }
     }
   }
@@ -571,15 +609,11 @@ public:
           c->push_failures++;
           c->pending_ack = 0;   // reset  (TODO: keep prev expected_ack's in a list, incase they arrive LATER, after we retry)
           MESH_DEBUG_PRINTLN("pending ACK timed out: push_failures: %d", (uint32_t)c->push_failures);
-
-          if (c->push_failures >= 3) {
-            evict(c);
-          }
         }
       }
       // check next Round-Robin client, and sync next new post
       auto client = &known_clients[next_client_idx];
-      if (client->pending_ack == 0 && client->last_activity != 0) {  // not already waiting for ACK, AND not evicted
+      if (client->pending_ack == 0 && client->last_activity != 0 && client->push_failures < 3) {  // not already waiting for ACK, AND not evicted, AND retries not max
         MESH_DEBUG_PRINTLN("loop - checking for client %02X", (uint32_t) client->id.pub_key[0]);
         for (int k = 0, idx = next_post_idx; k < MAX_UNSYNCED_POSTS; k++) {
           if (posts[idx].post_timestamp > client->sync_since   // is new post for this Client?
