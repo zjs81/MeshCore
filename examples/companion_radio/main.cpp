@@ -385,18 +385,19 @@ public:
       int tlen = strlen(self_name);   // revisit: UTF_8 ??
       memcpy(&out_frame[i], self_name, tlen); i += tlen;
       _serial->writeFrame(out_frame, i);
-    } else if (cmd_frame[0] == CMD_SEND_TXT_MSG && len >= 9) {
+    } else if (cmd_frame[0] == CMD_SEND_TXT_MSG && len >= 14) {
       int i = 1;
-      uint8_t attempt_and_flags = cmd_frame[i++];
+      uint8_t txt_type = cmd_frame[i++];
+      uint8_t attempt = cmd_frame[i++];
       uint32_t msg_timestamp;
       memcpy(&msg_timestamp, &cmd_frame[i], 4); i += 4;
       uint8_t* pub_key_prefix = &cmd_frame[i]; i += 6;
       ContactInfo* recipient = lookupContactByPubKey(pub_key_prefix, 6);
-      if (recipient && (attempt_and_flags >> 2) == TXT_TYPE_PLAIN) {
+      if (recipient && attempt < 4 && txt_type == TXT_TYPE_PLAIN) {
         char *text = (char *) &cmd_frame[i];
         int tlen = len - i;
         text[tlen] = 0;  // ensure null
-        int result = sendMessage(*recipient, msg_timestamp, attempt_and_flags, text, expected_ack_crc);
+        int result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack_crc);
         // TODO: add expected ACK to table
         if (result == MSG_SEND_FAILED) {
           writeErrFrame();
