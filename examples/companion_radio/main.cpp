@@ -123,8 +123,8 @@ class MyMesh : public BaseChatMesh {
   uint8_t out_frame[MAX_FRAME_SIZE+1];
 
   void loadContacts() {
-    if (_fs->exists("/contacts2")) {
-      File file = _fs->open("/contacts2");
+    if (_fs->exists("/contacts3")) {
+      File file = _fs->open("/contacts3");
       if (file) {
         bool full = false;
         while (!full) {
@@ -143,6 +143,8 @@ class MyMesh : public BaseChatMesh {
           success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
           success = success && (file.read(c.out_path, 64) == 64);
           success = success && (file.read((uint8_t *) c.lastmod, 4) == 4);
+          success = success && (file.read((uint8_t *) c.gps_lat, 4) == 4);
+          success = success && (file.read((uint8_t *) c.gps_lon, 4) == 4);
 
           if (!success) break;  // EOF
 
@@ -156,10 +158,10 @@ class MyMesh : public BaseChatMesh {
 
   void saveContacts() {
 #if defined(NRF52_PLATFORM)
-    File file = _fs->open("/contacts2", FILE_O_WRITE);
+    File file = _fs->open("/contacts3", FILE_O_WRITE);
     if (file) { file.seek(0); file.truncate(); }
 #else
-    File file = _fs->open("/contacts2", "w", true);
+    File file = _fs->open("/contacts3", "w", true);
 #endif
     if (file) {
       ContactsIterator iter;
@@ -178,6 +180,8 @@ class MyMesh : public BaseChatMesh {
         success = success && (file.write((uint8_t *) &c.last_advert_timestamp, 4) == 4);
         success = success && (file.write(c.out_path, 64) == 64);
         success = success && (file.write((uint8_t *) &c.lastmod, 4) == 4);
+        success = success && (file.write((uint8_t *) &c.gps_lat, 4) == 4);
+        success = success && (file.write((uint8_t *) &c.gps_lon, 4) == 4);
 
         if (!success) break;  // write failed
       }
@@ -206,11 +210,13 @@ class MyMesh : public BaseChatMesh {
     memcpy(&out_frame[i], contact.out_path, MAX_PATH_SIZE); i += MAX_PATH_SIZE;
     memcpy(&out_frame[i], contact.name, 32); i += 32;
     memcpy(&out_frame[i], &contact.last_advert_timestamp, 4); i += 4;
+    memcpy(&out_frame[i], &contact.gps_lat, 4); i += 4;
+    memcpy(&out_frame[i], &contact.gps_lon, 4); i += 4;
     memcpy(&out_frame[i], &contact.lastmod, 4); i += 4;
     _serial->writeFrame(out_frame, i);
   }
 
-  void updateContactFromFrame(ContactInfo& contact, const uint8_t* frame) {
+  void updateContactFromFrame(ContactInfo& contact, const uint8_t* frame, int len) {
     int i = 0;
     uint8_t code = frame[i++];  // eg. CMD_ADD_UPDATE_CONTACT
     memcpy(contact.id.pub_key, &frame[i], PUB_KEY_SIZE); i += PUB_KEY_SIZE;
@@ -220,6 +226,10 @@ class MyMesh : public BaseChatMesh {
     memcpy(contact.out_path, &frame[i], MAX_PATH_SIZE); i += MAX_PATH_SIZE;
     memcpy(contact.name, &frame[i], 32); i += 32;
     memcpy(&contact.last_advert_timestamp, &frame[i], 4); i += 4;
+    if (i + 8 >= len) {  // optional fields
+      memcpy(&contact.gps_lat, &frame[i], 4); i += 4;
+      memcpy(&contact.gps_lon, &frame[i], 4); i += 4;
+    }
   }
 
   void addToOfflineQueue(const uint8_t frame[], int len) {
@@ -482,13 +492,13 @@ public:
       uint8_t* pub_key = &cmd_frame[1];
       ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
       if (recipient) {
-        updateContactFromFrame(*recipient, cmd_frame);
+        updateContactFromFrame(*recipient, cmd_frame, len);
         //recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
         saveContacts();
         writeOKFrame();
       } else {
         ContactInfo contact;
-        updateContactFromFrame(contact, cmd_frame);
+        updateContactFromFrame(contact, cmd_frame, len);
         contact.lastmod = getRTCClock()->getCurrentTime();
         if (addContact(contact)) {
           saveContacts();

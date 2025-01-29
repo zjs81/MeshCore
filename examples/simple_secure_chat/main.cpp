@@ -115,6 +115,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
           success = success && (file.read((uint8_t *) &c.out_path_len, 1) == 1);
           success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
           success = success && (file.read(c.out_path, 64) == 64);
+          c.gps_lat = c.gps_lon = 0;   // not yet supported
 
           if (!success) break;  // EOF
 

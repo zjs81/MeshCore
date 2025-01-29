@@ -17,6 +17,7 @@ struct ContactInfo {
   uint32_t last_advert_timestamp;   // by THEIR clock
   uint8_t shared_secret[PUB_KEY_SIZE];
   uint32_t lastmod;  // by OUR clock
+  int32_t gps_lat, gps_lon;    // 6 dec places
 };
 
 #define MAX_SEARCH_RESULTS   8

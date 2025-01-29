@@ -38,6 +38,9 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
       from = &contacts[num_contacts++];
       from->id = id;
       from->out_path_len = -1;  // initially out_path is unknown
+      from->gps_lat = 0;   // initially unknown GPS loc
+      from->gps_lon = 0;
+
       // only need to calculate the shared_secret once, for better performance
       self_id.calcSharedSecret(from->shared_secret, id);
     } else {
@@ -50,6 +53,10 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   strncpy(from->name, parser.getName(), sizeof(from->name)-1);
   from->name[sizeof(from->name)-1] = 0;
   from->type = parser.getType();
+  if (parser.hasLatLon()) {
+    from->gps_lat = parser.getIntLat();
+    from->gps_lon = parser.getIntLon();
+  }
   from->last_advert_timestamp = timestamp;
   from->lastmod = getRTCClock()->getCurrentTime();
 
