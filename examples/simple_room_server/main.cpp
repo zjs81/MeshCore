@@ -354,6 +354,7 @@ protected:
 
         uint32_t now = getRTCClock()->getCurrentTime();
         client->last_activity = now;
+        client->push_failures = 0;  // reset so push can resume (if prev failed)
 
         // len can be > original length, but 'text' will be padded with zeroes
         data[len] = 0; // need to make a C string again, with null terminator
