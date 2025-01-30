@@ -396,8 +396,9 @@ public:
       if (recipient && attempt < 4 && txt_type == TXT_TYPE_PLAIN) {
         char *text = (char *) &cmd_frame[i];
         int tlen = len - i;
+        uint32_t est_timeout;
         text[tlen] = 0;  // ensure null
-        int result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack_crc);
+        int result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack_crc, est_timeout);
         // TODO: add expected ACK to table
         if (result == MSG_SEND_FAILED) {
           writeErrFrame();
@@ -407,7 +408,8 @@ public:
           out_frame[0] = RESP_CODE_SENT;
           out_frame[1] = (result == MSG_SEND_SENT_FLOOD) ? 1 : 0;
           memcpy(&out_frame[2], &expected_ack_crc, 4);
-          _serial->writeFrame(out_frame, 6);
+          memcpy(&out_frame[6], &est_timeout, 4);
+          _serial->writeFrame(out_frame, 10);
         }
       } else {
         writeErrFrame(); // unknown recipient, or unsuported TXT_TYPE_*
