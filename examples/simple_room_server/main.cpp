@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v3 (build: 30 Jan 2025)"
+#define FIRMWARE_VER_TEXT   "v3 (build: 31 Jan 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -184,7 +184,7 @@ class MyMesh : public mesh::Mesh {
     client->pending_ack = 0;
   }
 
-  void addPost(ClientInfo* client, const char* postData, char reply[]) {
+  void addPost(ClientInfo* client, const char* postData) {
     // TODO: suggested postData format: <title>/<descrption>
     posts[next_post_idx].author = client->id;    // add to cyclic queue
     strncpy(posts[next_post_idx].text, postData, MAX_POST_TEXT_LEN);
@@ -194,7 +194,6 @@ class MyMesh : public mesh::Mesh {
     // TODO:  only post at maximum of ONE PER SECOND, so that post_timestamps are UNIQUE!!
     next_post_idx = (next_post_idx + 1) % MAX_UNSYNCED_POSTS;
 
-    strcpy(reply, "[Posted]");
     next_push = futureMillis(PUSH_NOTIFY_DELAY_MILLIS);
   }
 
@@ -362,24 +361,31 @@ protected:
         uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
         mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 5 + strlen((char *)&data[5]), client->id.pub_key, PUB_KEY_SIZE);
 
-        mesh::Packet* ack = createAck(ack_hash);
-        if (ack) {
-          if (client->out_path_len < 0) {
-            sendFlood(ack);
-          } else {
-            sendDirect(ack, client->out_path, client->out_path_len);
-          }
-        }
-
         uint8_t temp[166];
+        bool send_ack;
         if (flags == TXT_TYPE_CLI_DATA) {
           if (client->is_admin) {
             handleAdminCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+            send_ack = true;
           } else {
-            strcpy((char *) &temp[5], "auth-err");
+            temp[5] = 0;  // no reply
+            send_ack = false;  // and no ACK...  user shoudn't be sending these
           }
         } else {   // TXT_TYPE_PLAIN
-          addPost(client, (const char *) &data[5], (char *) &temp[5]);
+          addPost(client, (const char *) &data[5]);
+          temp[5] = 0;  // no reply (ACK is enough)
+          send_ack = true;
+        }
+
+        if (send_ack) {
+          mesh::Packet* ack = createAck(ack_hash);
+          if (ack) {
+            if (client->out_path_len < 0) {
+              sendFlood(ack);
+            } else {
+              sendDirect(ack, client->out_path, client->out_path_len);
+            }
+          }
         }
 
         int text_len = strlen((char *) &temp[5]);
