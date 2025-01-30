@@ -129,7 +129,6 @@ struct PostInfo {
 #define REQ_TYPE_KEEP_ALIVE   1
 
 #define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
-#define RESP_SERVER_KEEP_ALIVE    1   // response to REQ_TYPE_KEEP_ALIVE
 
 struct NodePrefs {  // persisted to file
   float airtime_factor;
@@ -416,8 +415,15 @@ protected:
       uint32_t sender_timestamp;
       memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
       if (data[4] == REQ_TYPE_KEEP_ALIVE && packet->isRouteDirect()) {   // request type
+        uint32_t forceSince = 0;
         if (len >= 9) {   // optional - last post_timestamp client received
-          memcpy(&client->sync_since, &data[5], 4);    // force-update the 'sync since'
+          memcpy(&forceSince, &data[5], 4);    // NOTE: this may be 0, if part of decrypted PADDING!
+        }
+        if (forceSince > 0) { 
+          client->sync_since = forceSince;    // force-update the 'sync since'
+          len = 9;   // for ACK hash calc below
+        } else {
+          len = 5;   // for ACK hash calc below
         }
 
         uint32_t now = getRTCClock()->getCurrentTime();
@@ -429,12 +435,10 @@ protected:
 
         // RULE: only send keep_alive response DIRECT!
         if (client->out_path_len >= 0) {
-          uint8_t temp[8];
-          memcpy(temp, &now, 4);  // all responses start with sender timestamp
-          temp[4] = RESP_SERVER_KEEP_ALIVE;
-          memcpy(&temp[5], &client->sync_since, 4);  // let client know what server thinks is their 'since'
+          uint32_t ack_hash;    // calc ACK to prove to sender that we got request
+          mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, len, client->id.pub_key, PUB_KEY_SIZE);
 
-          auto reply = createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, temp, 9);
+          auto reply = createAck(ack_hash);
           if (reply) {
             sendDirect(reply, client->out_path, client->out_path_len);
           }
