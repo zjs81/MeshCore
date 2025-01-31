@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v2 (build: 30 Jan 2025)"
+#define FIRMWARE_VER_TEXT   "v2 (build: 31 Jan 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -60,7 +60,7 @@
   #include <helpers/CustomSX1262Wrapper.h>
   #include <helpers/CustomSX1268Wrapper.h>
   static XiaoC3Board board;
-#elif defined(SEEED_XIAO_S3)
+#elif defined(SEEED_XIAO_S3) || defined(LILYGO_T3S3)
   #include <helpers/ESP32Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
   static ESP32Board board;

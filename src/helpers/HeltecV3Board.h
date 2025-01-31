@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ESP32Board.h"
 #include <Arduino.h>
 
 // LoRa radio module pins for Heltec V3
@@ -19,12 +18,16 @@
 #define  PIN_ADC_CTRL_INACTIVE  HIGH
 #define  PIN_LED_BUILTIN 35
 
+#include "ESP32Board.h"
+
 #include <driver/rtc_io.h>
 
 class HeltecV3Board : public ESP32Board {
 public:
   void begin() {
     ESP32Board::begin();
+
+    pinMode(PIN_ADC_CTRL, OUTPUT);
 
     esp_reset_reason_t reason = esp_reset_reason();
     if (reason == ESP_RST_DEEPSLEEP) {
@@ -36,17 +39,6 @@ public:
       rtc_gpio_hold_dis((gpio_num_t)P_LORA_NSS);
       rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
     }
-
-    // battery read support
-    pinMode(PIN_VBAT_READ, INPUT);
-    adcAttachPin(PIN_VBAT_READ);
-    analogReadResolution(10);
-    pinMode(PIN_ADC_CTRL, OUTPUT);
-
-  #ifdef P_LORA_TX_LED
-    pinMode(P_LORA_TX_LED, OUTPUT);
-    digitalWrite(P_LORA_TX_LED, LOW);
-  #endif
   }
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn = -1) {
@@ -72,16 +64,8 @@ public:
     esp_deep_sleep_start();   // CPU halts here and never returns!
   }
 
-#if defined(P_LORA_TX_LED)
-  void onBeforeTransmit() override {
-    digitalWrite(P_LORA_TX_LED, HIGH);   // turn TX LED on
-  }
-  void onAfterTransmit() override {
-    digitalWrite(P_LORA_TX_LED, LOW);   // turn TX LED off
-  }
-#endif
-
   uint16_t getBattMilliVolts() override {
+    analogReadResolution(10);
     digitalWrite(PIN_ADC_CTRL, PIN_ADC_CTRL_ACTIVE);
 
     uint32_t raw = 0;

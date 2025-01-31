@@ -16,12 +16,44 @@ public:
   void begin() {
     // for future use, sub-classes SHOULD call this from their begin()
     startup_reason = BD_STARTUP_NORMAL;
+
+  #ifdef PIN_VBAT_READ
+    // battery read support
+    pinMode(PIN_VBAT_READ, INPUT);
+    adcAttachPin(PIN_VBAT_READ);
+  #endif
+
+  #ifdef P_LORA_TX_LED
+    pinMode(P_LORA_TX_LED, OUTPUT);
+    digitalWrite(P_LORA_TX_LED, LOW);
+  #endif
   }
 
   uint8_t getStartupReason() const override { return startup_reason; }
 
+#if defined(P_LORA_TX_LED)
+  void onBeforeTransmit() override {
+    digitalWrite(P_LORA_TX_LED, HIGH);   // turn TX LED on
+  }
+  void onAfterTransmit() override {
+    digitalWrite(P_LORA_TX_LED, LOW);   // turn TX LED off
+  }
+#endif
+
   uint16_t getBattMilliVolts() override {
+  #ifdef PIN_VBAT_READ
+    analogReadResolution(12);
+
+    uint32_t raw = 0;
+    for (int i = 0; i < 4; i++) {
+      raw += analogReadMilliVolts(PIN_VBAT_READ);
+    }
+    raw = raw / 4;
+
+    return (2 * raw);
+  #else
     return 0;  // not supported
+  #endif
   }
 
   const char* getManufacturerName() const override {
