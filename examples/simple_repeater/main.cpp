@@ -405,7 +405,7 @@ public:
     }
   }
 
-  void sendSelfAdvertisement() {
+  void sendSelfAdvertisement(int delay_millis) {
     uint8_t app_data[MAX_ADVERT_DATA_SIZE];
     uint8_t app_data_len;
     {
@@ -415,7 +415,7 @@ public:
 
     mesh::Packet* pkt = createAdvert(self_id, app_data, app_data_len);
     if (pkt) {
-      sendFlood(pkt, 800);  // add slight delay
+      sendFlood(pkt, delay_millis);
     } else {
       MESH_DEBUG_PRINTLN("ERROR: unable to create advertisement packet!");
     }
@@ -427,7 +427,7 @@ public:
     if (memcmp(command, "reboot", 6) == 0) {
       board.reboot();  // doesn't return
     } else if (memcmp(command, "advert", 6) == 0) {
-      sendSelfAdvertisement();
+      sendSelfAdvertisement(400);
       strcpy(reply, "OK - Advert sent");
     } else if (memcmp(command, "clock sync", 10) == 0) {
       uint32_t curr = getRTCClock()->getCurrentTime();
@@ -583,7 +583,7 @@ void setup() {
   }
 
   // send out initial Advertisement to the mesh
-  the_mesh.sendSelfAdvertisement();
+  the_mesh.sendSelfAdvertisement(2000);
 }
 
 void loop() {
