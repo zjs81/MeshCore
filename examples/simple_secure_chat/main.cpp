@@ -185,6 +185,8 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
               onRecvPacket(pkt);  // loop-back, as if received over radio
               releasePacket(pkt);   // undo the obtainNewPacket()
               return;
+            } else {
+              releasePacket(pkt);   // undo the obtainNewPacket()
             }
           }
         }
@@ -381,6 +383,8 @@ public:
       auto pkt = createSelfAdvert(self_name);
       if (pkt) {
         uint8_t len =  pkt->writeTo(tmp_buf);
+        releasePacket(pkt);  // undo the obtainNewPacket()
+
         mesh::Utils::toHex(hex_buf, tmp_buf, len);
         Serial.println("Your MeshCore biz card:");
         Serial.print("meshcore://"); Serial.println(hex_buf);
