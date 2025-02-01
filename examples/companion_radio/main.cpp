@@ -132,6 +132,7 @@ class MyMesh : public BaseChatMesh {
   unsigned long last_msg_sent;
   ContactsIterator _iter;
   uint32_t _iter_filter_since;
+  uint32_t _most_recent_lastmod;
   bool  _iter_started;
   uint8_t cmd_frame[MAX_FRAME_SIZE+1];
   uint8_t out_frame[MAX_FRAME_SIZE+1];
@@ -513,6 +514,7 @@ public:
         // start iterator
         _iter = startContactsIterator();
         _iter_started = true;
+        _most_recent_lastmod = 0;
       }
     } else if (cmd_frame[0] == CMD_SET_ADVERT_NAME && len >= 2) {
       int nlen = len - 1;
@@ -610,10 +612,14 @@ public:
       if (_iter.hasNext(this, contact)) {
         if (contact.lastmod > _iter_filter_since) {  // apply the 'since' filter
           writeContactRespFrame(RESP_CODE_CONTACT, contact);
+          if (contact.lastmod > _most_recent_lastmod) {
+            _most_recent_lastmod = contact.lastmod;   // save for the RESP_CODE_END_OF_CONTACTS frame
+          }
         }
       } else {  // EOF
         out_frame[0] = RESP_CODE_END_OF_CONTACTS;
-        _serial->writeFrame(out_frame, 1);
+        memcpy(&out_frame[1], &_most_recent_lastmod, 4);  // include the most recent lastmod, so app can update their 'since'
+        _serial->writeFrame(out_frame, 5);
         _iter_started = false;
       }
     }
