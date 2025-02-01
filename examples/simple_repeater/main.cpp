@@ -119,6 +119,8 @@ struct NodePrefs {  // persisted to file
   double node_lat, node_lon;
   char password[16];
   float freq;
+  uint8_t tx_power_dbm;
+  uint8_t unused[3];
 };
 
 class MyMesh : public mesh::Mesh {
@@ -375,9 +377,12 @@ public:
     strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password)-1);
     _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
     _prefs.freq = LORA_FREQ;
+    _prefs.tx_power_dbm = LORA_TX_POWER;
+    memset(_prefs.unused, 0, sizeof(_prefs.unused));
   }
 
   float getFreqPref() const { return _prefs.freq; }
+  uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
 
   void begin(FILESYSTEM* fs) {
     mesh::Mesh::begin();
@@ -475,6 +480,10 @@ public:
         _prefs.node_lon = atof(&config[4]);
         savePrefs();
         strcpy(reply, "OK");
+      } else if (memcmp(config, "tx ", 3) == 0) {
+        _prefs.tx_power_dbm = atoi(&config[3]);
+        savePrefs();
+        strcpy(reply, "OK - reboot to apply");
       } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
         _prefs.freq = atof(&config[5]);
         savePrefs();
@@ -580,6 +589,9 @@ void setup() {
 
   if (LORA_FREQ != the_mesh.getFreqPref()) {
     radio.setFrequency(the_mesh.getFreqPref());
+  }
+  if (LORA_TX_POWER != the_mesh.getTxPowerPref()) {
+    radio.setOutputPower(the_mesh.getTxPowerPref());
   }
 
   // send out initial Advertisement to the mesh
