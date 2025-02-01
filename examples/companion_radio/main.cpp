@@ -91,6 +91,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_SET_ADVERT_NAME        8
 #define CMD_ADD_UPDATE_CONTACT     9
 #define CMD_SYNC_NEXT_MESSAGE     10
+#define CMD_SET_RADIO_PARAMS      11
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -110,8 +111,21 @@ static uint32_t _atoi(const char* sp) {
 
 /* -------------------------------------------------------------------------------------- */
 
+struct NodePrefs {  // persisted to file
+  float airtime_factor;
+  char node_name[32];
+  double node_lat, node_lon;
+  float freq;
+  uint8_t sf;
+  uint8_t cr;
+  uint8_t reserved1;
+  uint8_t reserved2;
+  float bw;
+};
+
 class MyMesh : public BaseChatMesh {
   FILESYSTEM* _fs;
+  NodePrefs _prefs;
   uint32_t expected_ack_crc;  // TODO: keep table of expected ACKs
   mesh::GroupChannel* _public;
   BaseSerialInterface* _serial;
@@ -338,13 +352,29 @@ protected:
   }
 
 public:
-  char self_name[sizeof(ContactInfo::name)];
 
   MyMesh(RadioLibWrapper& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
      : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables), _serial(NULL)
   {
     _iter_started = false;
+
+    // defaults
+    _prefs.airtime_factor = 1.0;    // one half
+    strcpy(_prefs.node_name, "NONAME");
+    _prefs.node_lat = 0;
+    _prefs.node_lon = 0;
+    _prefs.freq = LORA_FREQ;
+    _prefs.sf = LORA_SF;
+    _prefs.bw = LORA_BW;
+    _prefs.cr = LORA_CR;
+    _prefs.reserved1 = 0;
+    _prefs.reserved2 = 0;
   }
+
+  float getFreqPref() const { return _prefs.freq; }
+  uint8_t getSFPref() const { return _prefs.sf; }
+  uint8_t getCRPref() const { return _prefs.cr; }
+  float getBWPref() const { return _prefs.bw; }
 
   void begin(FILESYSTEM& fs, BaseSerialInterface& serial) {
     _fs = &fs;
@@ -352,15 +382,36 @@ public:
 
     BaseChatMesh::begin();
 
-    strcpy(self_name, "UNSET");
     IdentityStore store(fs, "/identity");
-    if (!store.load("_main", self_id, self_name, sizeof(self_name))) {
+    if (!store.load("_main", self_id)) {
       self_id = mesh::LocalIdentity(getRNG());  // create new random identity
       store.save("_main", self_id);
     }
 
+    // load persisted prefs
+    if (_fs->exists("/node_prefs")) {
+      File file = _fs->open("/node_prefs");
+      if (file) {
+        file.read((uint8_t *) &_prefs, sizeof(_prefs));
+        file.close();
+      }
+    }
+
     loadContacts();
     _public = addChannel(PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
+  }
+
+  void savePrefs() {
+#if defined(NRF52_PLATFORM)
+    File file = _fs->open("/node_prefs", FILE_O_WRITE);
+    if (file) { file.seek(0); file.truncate(); }
+#else
+    File file = _fs->open("/node_prefs", "w", true);
+#endif
+    if (file) {
+      file.write((const uint8_t *)&_prefs, sizeof(_prefs));
+      file.close();
+    }
   }
 
   void handleCmdFrame(size_t len) {
@@ -382,8 +433,16 @@ public:
       memcpy(&out_frame[i], &latlonsats, 4); i += 4;   // reserved future, for companion radios with GPS (like T-Beam, T1000)
       memcpy(&out_frame[i], &latlonsats, 4); i += 4;
       memcpy(&out_frame[i], &latlonsats, 4); i += 4;
-      int tlen = strlen(self_name);   // revisit: UTF_8 ??
-      memcpy(&out_frame[i], self_name, tlen); i += tlen;
+      
+      uint32_t freq = _prefs.freq * 1000;
+      memcpy(&out_frame[i], &freq, 4); i += 4;
+      uint32_t bw = _prefs.bw*1000;
+      memcpy(&out_frame[i], &bw, 4); i += 4;
+      out_frame[i++] = _prefs.sf;
+      out_frame[i++] = _prefs.cr;
+
+      int tlen = strlen(_prefs.node_name);   // revisit: UTF_8 ??
+      memcpy(&out_frame[i], _prefs.node_name, tlen); i += tlen;
       _serial->writeFrame(out_frame, i);
     } else if (cmd_frame[0] == CMD_SEND_TXT_MSG && len >= 14) {
       int i = 1;
@@ -457,11 +516,10 @@ public:
       }
     } else if (cmd_frame[0] == CMD_SET_ADVERT_NAME && len >= 2) {
       int nlen = len - 1;
-      if (nlen > sizeof(self_name)-1) nlen = sizeof(self_name)-1;  // max len
-      memcpy(self_name, &cmd_frame[1], nlen);
-      self_name[nlen] = 0;
-      IdentityStore store(*_fs, "/identity");       // update IdentityStore
-      store.save("_main", self_id, self_name);
+      if (nlen > sizeof(_prefs.node_name)-1) nlen = sizeof(_prefs.node_name)-1;  // max len
+      memcpy(_prefs.node_name, &cmd_frame[1], nlen);
+      _prefs.node_name[nlen] = 0; // null terminator
+      savePrefs();
       writeOKFrame();
     } else if (cmd_frame[0] == CMD_GET_DEVICE_TIME) {
       uint8_t reply[5];
@@ -480,7 +538,7 @@ public:
         writeErrFrame();
       }
     } else if (cmd_frame[0] == CMD_SEND_SELF_ADVERT) {
-      auto pkt = createSelfAdvert(self_name);
+      auto pkt = createSelfAdvert(_prefs.node_name);
       if (pkt) {
         if (len >= 2 && cmd_frame[1] == 1) {   // optional param (1 = flood, 0 = zero hop)
           sendFlood(pkt);
@@ -514,6 +572,25 @@ public:
       int out_len;
       if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
         _serial->writeFrame(out_frame, out_len);
+      }
+    } else if (cmd_frame[0] == CMD_SET_RADIO_PARAMS) {
+      int i = 1;
+      uint32_t freq;
+      memcpy(&freq, &cmd_frame[i], 4); i += 4;
+      uint32_t bw;
+      memcpy(&bw, &cmd_frame[i], 4); i += 4;
+      uint8_t sf = out_frame[i++];
+      uint8_t cr = out_frame[i++];
+
+      if (freq >= 300000 && freq <= 2500000 && sf >= 7 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 && bw <= 500000) {
+        _prefs.sf = sf;
+        _prefs.cr = cr;
+        _prefs.freq = (float)freq / 1000.0;
+        _prefs.bw = (float)bw / 1000.0;
+        savePrefs();
+        writeOKFrame();  // reboot now required!
+      } else {
+        writeErrFrame();
       }
     } else {
       writeErrFrame();
@@ -631,6 +708,19 @@ void setup() {
 #else
   #error "need to define filesystem"
 #endif
+
+  if (LORA_FREQ != the_mesh.getFreqPref()) {
+    radio.setFrequency(the_mesh.getFreqPref());
+  }
+  if (LORA_SF != the_mesh.getSFPref()) {
+    radio.setSpreadingFactor(the_mesh.getSFPref());
+  }
+  if (LORA_BW != the_mesh.getBWPref()) {
+    radio.setBandwidth(the_mesh.getBWPref());
+  }
+  if (LORA_CR != the_mesh.getCRPref()) {
+    radio.setCodingRate(the_mesh.getCRPref());
+  }
 }
 
 void loop() {
