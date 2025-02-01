@@ -46,6 +46,7 @@ MeshCore is designed for use with:
 * RAK4631
 * XiaoS3 WIO (sx1262 combo)
 * XiaoC3 (plus external sx126x module)
+* LilyGo T3S3
 * Heltec T114
 * Station G2
 
