@@ -185,6 +185,8 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       if (i > pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete advertisement packet");
+      } else if (self_id.matches(id.pub_key)) {
+        MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): receiving SELF advert packet");
       } else if (!_tables->hasSeen(pkt)) {
         uint8_t* app_data = &pkt->payload[i];
         int app_data_len = pkt->payload_len - i;

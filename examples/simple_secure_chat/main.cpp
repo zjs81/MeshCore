@@ -86,7 +86,9 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   mesh::GroupChannel* _public;
   unsigned long last_msg_sent;
   ContactInfo* curr_recipient;
-  char command[MAX_TEXT_LEN+1];
+  char command[512+10];
+  uint8_t tmp_buf[256];
+  char hex_buf[512];
 
   const char* getTypeName(uint8_t type) const {
     if (type == ADV_TYPE_CHAT) return "Chat";
@@ -166,6 +168,29 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
     } else {
       Serial.println("   (ERR: clock cannot go backwards)");
     }
+  }
+
+  void importCard(const char* command) {
+    while (*command == ' ') command++;   // skip leading spaces
+    if (memcmp(command, "meshcore://", 11) == 0) {
+      command += 11;  // skip the prefix
+      int len = strlen(command);
+      if (len % 2 == 0) {
+        len >>= 1;  // halve, for num bytes
+        if (mesh::Utils::fromHex(tmp_buf, len, command)) {
+          auto pkt = obtainNewPacket();
+          if (pkt) {
+            if (pkt->readFrom(tmp_buf, len) && pkt->getPayloadType() == PAYLOAD_TYPE_ADVERT) {
+              pkt->header |= ROUTE_TYPE_FLOOD;   // simulate it being received flood-mode
+              onRecvPacket(pkt);  // loop-back, as if received over radio
+              releasePacket(pkt);   // undo the obtainNewPacket()
+              return;
+            }
+          }
+        }
+      }
+    }
+    Serial.println("   error: invalid format");
   }
 
 protected:
@@ -351,9 +376,25 @@ public:
         saveContacts();
         Serial.println("   Done.");
       }
+    } else if (memcmp(command, "card", 4) == 0) {
+      Serial.printf("Hello %s\n", self_name);
+      auto pkt = createSelfAdvert(self_name);
+      if (pkt) {
+        uint8_t len =  pkt->writeTo(tmp_buf);
+        mesh::Utils::toHex(hex_buf, tmp_buf, len);
+        Serial.println("Your MeshCore biz card:");
+        Serial.print("meshcore://"); Serial.println(hex_buf);
+        Serial.println();
+      } else {
+        Serial.println("  Error");
+      }
+    } else if (memcmp(command, "import ", 7) == 0) {
+      importCard(&command[7]);
     } else if (memcmp(command, "help", 4) == 0) {
-      Serial.printf("Hello %s, Commands:\n", self_name);
+      Serial.println("Commands:");
       Serial.println("   name <your name>");
+      Serial.println("   card");
+      Serial.println("   import {biz card}");
       Serial.println("   clock");
       Serial.println("   time <epoch-seconds>");
       Serial.println("   list {n}");

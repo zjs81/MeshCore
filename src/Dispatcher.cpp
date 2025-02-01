@@ -157,8 +157,11 @@ void Dispatcher::checkSend() {
 
 Packet* Dispatcher::obtainNewPacket() {
   auto pkt = _mgr->allocNew();  // TODO: zero out all fields
-  if (pkt == NULL) n_full_events++;
-
+  if (pkt == NULL) {
+    n_full_events++;
+  } else {
+    pkt->payload_len = pkt->path_len = 0;
+  }
   return pkt;
 }
 
