@@ -19,8 +19,8 @@
 #define SX126X_DIO3_TCXO_VOLTAGE   1.8
 
 // built-ins
-#define  PIN_VBAT_READ    1
-#define  ADC_MULTIPLIER   6.17
+#define  PIN_VBAT_READ    5
+#define  ADC_MULTIPLIER   (3 * 1.73)
 
 class RAK4631Board : public mesh::MainBoard {
 protected:
@@ -31,6 +31,8 @@ public:
     // for future use, sub-classes SHOULD call this from their begin()
     startup_reason = BD_STARTUP_NORMAL;
 
+    pinMode(PIN_VBAT_READ, INPUT);
+
     pinMode(SX126X_POWER_EN, OUTPUT);
     digitalWrite(SX126X_POWER_EN, HIGH);
     delay(10);   // give sx1262 some time to power up
@@ -38,7 +40,7 @@ public:
 
   uint8_t getStartupReason() const override { return startup_reason; }
 
-  #define BATTERY_SAMPLES 10
+  #define BATTERY_SAMPLES 8
 
   uint16_t getBattMilliVolts() override {
     analogReadResolution(12);
