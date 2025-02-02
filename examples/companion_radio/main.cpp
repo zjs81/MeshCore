@@ -377,7 +377,7 @@ public:
   uint8_t getCRPref() const { return _prefs.cr; }
   float getBWPref() const { return _prefs.bw; }
 
-  void begin(FILESYSTEM& fs, BaseSerialInterface& serial) {
+  void begin(FILESYSTEM& fs, BaseSerialInterface& serial, mesh::RNG& trng) {
     _fs = &fs;
     _serial = &serial;
 
@@ -385,7 +385,7 @@ public:
 
     IdentityStore store(fs, "/identity");
     if (!store.load("_main", self_id)) {
-      self_id = mesh::LocalIdentity(getRNG());  // create new random identity
+      self_id = mesh::LocalIdentity(&trng);  // create new random identity
       store.save("_main", self_id);
     }
 
@@ -696,10 +696,12 @@ void setup() {
 
   fast_rng.begin(radio.random(0x7FFFFFFF));
 
+  RadioNoiseListener trng(radio);
+
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
 
-  the_mesh.begin(InternalFS, serial_interface);
+  the_mesh.begin(InternalFS, serial_interface, trng);
 #elif defined(ESP32)
   SPIFFS.begin(true);
 
@@ -710,7 +712,7 @@ void setup() {
 #endif
   serial_interface.enable();
 
-  the_mesh.begin(SPIFFS, serial_interface);
+  the_mesh.begin(SPIFFS, serial_interface, trng);
 #else
   #error "need to define filesystem"
 #endif

@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v4 (build: 31 Jan 2025)"
+#define FIRMWARE_VER_TEXT   "v4 (build: 2 Feb 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -721,6 +721,8 @@ void setup() {
   radio.setDio2AsRfSwitch(SX126X_DIO2_AS_RF_SWITCH);
 #endif
 
+  fast_rng.begin(radio.random(0x7FFFFFFF));
+
   FILESYSTEM* fs;
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
@@ -734,7 +736,8 @@ void setup() {
   #error "need to define filesystem"
 #endif
   if (!store.load("_main", the_mesh.self_id)) {
-    the_mesh.self_id = mesh::LocalIdentity(the_mesh.getRNG());  // create new random identity
+    RadioNoiseListener rng(radio);
+    the_mesh.self_id = mesh::LocalIdentity(&rng);  // create new random identity
     store.save("_main", the_mesh.self_id);
   }
 
