@@ -482,7 +482,7 @@ public:
       Serial.println(FIRMWARE_VER_TEXT);
     } else if (memcmp(command, "help", 4) == 0) {
       Serial.println("Commands:");
-      Serial.println("   name <your name>");
+      Serial.println("   set {name|lat|lon|freq|tx|af} {value}");
       Serial.println("   card");
       Serial.println("   import {biz card}");
       Serial.println("   clock");
