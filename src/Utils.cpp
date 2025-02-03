@@ -115,6 +115,10 @@ static uint8_t hexVal(char c) {
   return 0;
 }
 
+bool Utils::isHexChar(char c) {
+  return c == '0' || hexVal(c) > 0;
+}
+
 bool Utils::fromHex(uint8_t* dest, int dest_size, const char *src_hex) {
   int len = strlen(src_hex);
   if (len != dest_size*2) return false;  // incorrect length

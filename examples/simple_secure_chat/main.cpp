@@ -18,6 +18,8 @@
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
+#define FIRMWARE_VER_TEXT   "v2 (build: 3 Feb 2025)"
+
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
 #endif
@@ -80,8 +82,18 @@ static uint32_t _atoi(const char* sp) {
 
 /* -------------------------------------------------------------------------------------- */
 
+struct NodePrefs {  // persisted to file
+  float airtime_factor;
+  char node_name[32];
+  double node_lat, node_lon;
+  float freq;
+  uint8_t tx_power_dbm;
+  uint8_t unused[3];
+};
+
 class MyMesh : public BaseChatMesh, ContactVisitor {
   FILESYSTEM* _fs;
+  NodePrefs _prefs;
   uint32_t expected_ack_crc;
   mesh::GroupChannel* _public;
   unsigned long last_msg_sent;
@@ -174,6 +186,12 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
     while (*command == ' ') command++;   // skip leading spaces
     if (memcmp(command, "meshcore://", 11) == 0) {
       command += 11;  // skip the prefix
+      char *ep = strchr(command, 0);  // find end of string
+      while (ep > command) {
+        ep--;
+        if (mesh::Utils::isHexChar(*ep)) break;  // found tail end of card
+        *ep = 0;  // remove trailing spaces and other junk
+      }
       int len = strlen(command);
       if (len % 2 == 0) {
         len >>= 1;  // halve, for num bytes
@@ -196,6 +214,10 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   }
 
 protected:
+  float getAirtimeBudgetFactor() const override {
+    return _prefs.airtime_factor;
+  }
+
   void onDiscoveredContact(ContactInfo& contact, bool is_new) override {
     // TODO: if not in favs,  prompt to add as fav(?)
 
@@ -256,37 +278,74 @@ protected:
   }
 
 public:
-  char self_name[sizeof(ContactInfo::name)];
 
   MyMesh(RadioLibWrapper& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
      : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
+    // defaults
+    memset(&_prefs, 0, sizeof(_prefs));
+    _prefs.airtime_factor = 2.0;    // one third
+    strcpy(_prefs.node_name, "NONAME");
+    _prefs.freq = LORA_FREQ;
+    _prefs.tx_power_dbm = LORA_TX_POWER;
+
     command[0] = 0;
     curr_recipient = NULL;
   }
+
+  float getFreqPref() const { return _prefs.freq; }
+  uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
 
   void begin(FILESYSTEM& fs) {
     _fs = &fs;
 
     BaseChatMesh::begin();
 
-    strcpy(self_name, "UNSET");
     IdentityStore store(fs, "/identity");
-    if (!store.load("_main", self_id, self_name, sizeof(self_name))) {
+    if (!store.load("_main", self_id, _prefs.node_name, sizeof(_prefs.node_name))) {  // legacy: node_name was from identity file
       self_id = mesh::LocalIdentity(getRNG());  // create new random identity
       store.save("_main", self_id);
+    }
+
+    // load persisted prefs
+    if (_fs->exists("/node_prefs")) {
+      File file = _fs->open("/node_prefs");
+      if (file) {
+        file.read((uint8_t *) &_prefs, sizeof(_prefs));
+        file.close();
+      }
     }
 
     loadContacts();
     _public = addChannel(PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   }
 
+  void savePrefs() {
+#if defined(NRF52_PLATFORM)
+    File file = _fs->open("/node_prefs", FILE_O_WRITE);
+    if (file) { file.seek(0); file.truncate(); }
+#else
+    File file = _fs->open("/node_prefs", "w", true);
+#endif
+    if (file) {
+      file.write((const uint8_t *)&_prefs, sizeof(_prefs));
+      file.close();
+    }
+  }
+
   void showWelcome() {
     Serial.println("===== MeshCore Chat Terminal =====");
     Serial.println();
-    Serial.printf("WELCOME  %s\n", self_name);
+    Serial.printf("WELCOME  %s\n", _prefs.node_name);
     Serial.println("   (enter 'help' for basic commands)");
     Serial.println();
+  }
+
+  void sendSelfAdvert(int delay_millis) {
+    auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
+    if (pkt) {
+      sendFlood(pkt, delay_millis);
+    }
   }
 
   // ContactVisitor
@@ -322,7 +381,7 @@ public:
       memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
       temp[4] = 0;  // attempt and flags
 
-      sprintf((char *) &temp[5], "%s: %s", self_name, &command[7]);  // <sender>: <msg>
+      sprintf((char *) &temp[5], "%s: %s", _prefs.node_name, &command[7]);  // <sender>: <msg>
       temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
 
       int len = strlen((char *) &temp[5]);
@@ -343,11 +402,6 @@ public:
       uint32_t now = getRTCClock()->getCurrentTime();
       DateTime dt = DateTime(now);
       Serial.printf(   "%02d:%02d - %d/%d/%d UTC\n", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
-    } else if (memcmp(command, "name ", 5) == 0) {  // set name
-      strncpy(self_name, &command[5], sizeof(self_name)-1);
-      self_name[sizeof(self_name)-1] = 0;
-      IdentityStore store(*_fs, "/identity");       // update IdentityStore
-      store.save("_main", self_id, self_name);
     } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
       uint32_t secs = _atoi(&command[5]);
       setClock(secs);
@@ -365,7 +419,7 @@ public:
          Serial.println("   Err: no recipient selected");
       }
     } else if (strcmp(command, "advert") == 0) {
-      auto pkt = createSelfAdvert(self_name);
+      auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
       if (pkt) {
         sendZeroHop(pkt);
         Serial.println("   (advert sent, zero hop).");
@@ -379,8 +433,8 @@ public:
         Serial.println("   Done.");
       }
     } else if (memcmp(command, "card", 4) == 0) {
-      Serial.printf("Hello %s\n", self_name);
-      auto pkt = createSelfAdvert(self_name);
+      Serial.printf("Hello %s\n", _prefs.node_name);
+      auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
       if (pkt) {
         uint8_t len =  pkt->writeTo(tmp_buf);
         releasePacket(pkt);  // undo the obtainNewPacket()
@@ -394,6 +448,38 @@ public:
       }
     } else if (memcmp(command, "import ", 7) == 0) {
       importCard(&command[7]);
+    } else if (memcmp(command, "set ", 4) == 0) {
+      const char* config = &command[4];
+      if (memcmp(config, "af ", 3) == 0) {
+        _prefs.airtime_factor = atof(&config[3]);
+        savePrefs();
+        Serial.println("  OK");
+      } else if (memcmp(config, "name ", 5) == 0) {
+        strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
+        _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
+        savePrefs();
+        Serial.println("  OK");
+      } else if (memcmp(config, "lat ", 4) == 0) {
+        _prefs.node_lat = atof(&config[4]);
+        savePrefs();
+        Serial.println("  OK");
+      } else if (memcmp(config, "lon ", 4) == 0) {
+        _prefs.node_lon = atof(&config[4]);
+        savePrefs();
+        Serial.println("  OK");
+      } else if (memcmp(config, "tx ", 3) == 0) {
+        _prefs.tx_power_dbm = atoi(&config[3]);
+        savePrefs();
+        Serial.println("  OK - reboot to apply");
+      } else if (memcmp(config, "freq ", 5) == 0) {
+        _prefs.freq = atof(&config[5]);
+        savePrefs();
+        Serial.println("  OK - reboot to apply");
+      } else {
+        Serial.printf("  ERROR: unknown config: %s\n", config);
+      }
+    } else if (memcmp(command, "ver", 3) == 0) {
+      Serial.println(FIRMWARE_VER_TEXT);
     } else if (memcmp(command, "help", 4) == 0) {
       Serial.println("Commands:");
       Serial.println("   name <your name>");
@@ -499,13 +585,17 @@ void setup() {
   #error "need to define filesystem"
 #endif
 
+  if (LORA_FREQ != the_mesh.getFreqPref()) {
+    radio.setFrequency(the_mesh.getFreqPref());
+  }
+  if (LORA_TX_POWER != the_mesh.getTxPowerPref()) {
+    radio.setOutputPower(the_mesh.getTxPowerPref());
+  }
+
   the_mesh.showWelcome();
 
   // send out initial Advertisement to the mesh
-  auto pkt = the_mesh.createSelfAdvert(the_mesh.self_name);
-  if (pkt) {
-    the_mesh.sendFlood(pkt, 1200);    // add slight delay
-  }
+  the_mesh.sendSelfAdvert(1200);   // add slight delay
 }
 
 void loop() {

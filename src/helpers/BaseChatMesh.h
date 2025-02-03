@@ -96,7 +96,7 @@ protected:
   void onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) override;
 
 public:
-  mesh::Packet* createSelfAdvert(const char* name);
+  mesh::Packet* createSelfAdvert(const char* name, double lat=0.0, double lon=0.0);
   int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack, uint32_t& est_timeout);
   void resetPathTo(ContactInfo& recipient);
   void scanRecentContacts(int last_n, ContactVisitor* visitor);

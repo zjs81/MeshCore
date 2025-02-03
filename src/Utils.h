@@ -80,6 +80,8 @@ public:
    * \returns  the number of parts parsed (in 'parts')
    */
   static int parseTextParts(char* text, const char* parts[], int max_num, char separator=',');
+
+  static bool isHexChar(char c);
 };
 
 }

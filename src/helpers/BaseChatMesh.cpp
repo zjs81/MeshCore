@@ -1,11 +1,11 @@
 #include <helpers/BaseChatMesh.h>
 #include <Utils.h>
 
-mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name) {
+mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name, double lat, double lon) {
   uint8_t app_data[MAX_ADVERT_DATA_SIZE];
   uint8_t app_data_len;
   {
-    AdvertDataBuilder builder(ADV_TYPE_CHAT, name);
+    AdvertDataBuilder builder(ADV_TYPE_CHAT, name, lat, lon);
     app_data_len = builder.encodeTo(app_data);
   }
 
