@@ -45,10 +45,12 @@ bool IdentityStore::save(const char *name, const mesh::LocalIdentity& id) {
   File file = _fs->open(filename, "w", true);
 #endif
   if (file) {
-    id.writeTo(file);
+    bool success = id.writeTo(file);
     file.close();
+    MESH_DEBUG_PRINTLN("IdentityStore::save() write - %s", success ? "OK" : "Err");
     return true;
   }
+  MESH_DEBUG_PRINTLN("IdentityStore::save() failed");
   return false;
 }
 

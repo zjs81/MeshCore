@@ -301,7 +301,11 @@ public:
 
     BaseChatMesh::begin();
 
+  #if defined(NRF52_PLATFORM)
+    IdentityStore store(fs, "");
+  #else
     IdentityStore store(fs, "/identity");
+  #endif
     if (!store.load("_main", self_id, _prefs.node_name, sizeof(_prefs.node_name))) {  // legacy: node_name was from identity file
       self_id = mesh::LocalIdentity(getRNG());  // create new random identity
       store.save("_main", self_id);

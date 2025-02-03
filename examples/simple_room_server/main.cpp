@@ -727,7 +727,7 @@ void setup() {
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
   fs = &InternalFS;
-  IdentityStore store(InternalFS, "/identity");
+  IdentityStore store(InternalFS, "");
 #elif defined(ESP32)
   SPIFFS.begin(true);
   fs = &SPIFFS;

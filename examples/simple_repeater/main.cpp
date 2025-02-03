@@ -498,6 +498,15 @@ public:
       } else {
         sprintf(reply, "unknown config: %s", config);
       }
+    } else if (sender_timestamp == 0 && strcmp(command, "erase") == 0) {
+  #if defined(NRF52_PLATFORM)
+      bool s = InternalFS.format();
+  #elif defined(ESP32)
+      bool s = SPIFFS.format();
+  #else
+    #error "need to implement file system erase"
+  #endif
+      sprintf(reply, "File system erase: %s", s ? "OK" : "Err");
     } else if (memcmp(command, "ver", 3) == 0) {
       strcpy(reply, FIRMWARE_VER_TEXT);
     } else {
@@ -576,7 +585,7 @@ void setup() {
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
   fs = &InternalFS;
-  IdentityStore store(InternalFS, "/identity");
+  IdentityStore store(InternalFS, "");
 #elif defined(ESP32)
   SPIFFS.begin(true);
   fs = &SPIFFS;
@@ -585,6 +594,7 @@ void setup() {
   #error "need to define filesystem"
 #endif
   if (!store.load("_main", the_mesh.self_id)) {
+    MESH_DEBUG_PRINTLN("Generating new keypair");
     RadioNoiseListener rng(radio);
     the_mesh.self_id = mesh::LocalIdentity(&rng);  // create new random identity
     store.save("_main", the_mesh.self_id);
