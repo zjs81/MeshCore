@@ -74,7 +74,7 @@
   #include <helpers/CustomSX1262Wrapper.h>
   static ESP32Board board;
 #elif defined(RAK_4631)
-  #include <helpers/RAK4631Board.h>
+  #include <helpers/nrf52/RAK4631Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
   static RAK4631Board board;
 #else

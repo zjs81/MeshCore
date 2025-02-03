@@ -3,8 +3,6 @@
 #include <MeshCore.h>
 #include <Arduino.h>
 
-#if defined(NRF52_PLATFORM)
-
 // LoRa radio module pins for RAK4631
 #define  P_LORA_DIO_1   47
 #define  P_LORA_NSS     42
@@ -61,6 +59,6 @@ public:
   void reboot() override {
     NVIC_SystemReset();
   }
-};
 
-#endif
+  bool startOTAUpdate() override;
+};
