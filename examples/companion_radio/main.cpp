@@ -34,6 +34,9 @@
 #ifndef LORA_TX_POWER
   #define LORA_TX_POWER  20
 #endif
+#ifndef MAX_LORA_TX_POWER
+  #define MAX_LORA_TX_POWER  LORA_TX_POWER
+#endif
 
 #ifndef MAX_CONTACTS
   #define MAX_CONTACTS         100
@@ -92,6 +95,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_ADD_UPDATE_CONTACT     9
 #define CMD_SYNC_NEXT_MESSAGE     10
 #define CMD_SET_RADIO_PARAMS      11
+#define CMD_SET_RADIO_TX_POWER    12
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -121,6 +125,8 @@ struct NodePrefs {  // persisted to file
   uint8_t reserved1;
   uint8_t reserved2;
   float bw;
+  uint8_t tx_power_dbm;
+  uint8_t unused[3];
 };
 
 class MyMesh : public BaseChatMesh {
@@ -360,22 +366,21 @@ public:
     _iter_started = false;
 
     // defaults
+    memset(&_prefs, 0, sizeof(_prefs));
     _prefs.airtime_factor = 1.0;    // one half
     strcpy(_prefs.node_name, "NONAME");
-    _prefs.node_lat = 0;
-    _prefs.node_lon = 0;
     _prefs.freq = LORA_FREQ;
     _prefs.sf = LORA_SF;
     _prefs.bw = LORA_BW;
     _prefs.cr = LORA_CR;
-    _prefs.reserved1 = 0;
-    _prefs.reserved2 = 0;
+    _prefs.tx_power_dbm = LORA_TX_POWER;
   }
 
   float getFreqPref() const { return _prefs.freq; }
   uint8_t getSFPref() const { return _prefs.sf; }
   uint8_t getCRPref() const { return _prefs.cr; }
   float getBWPref() const { return _prefs.bw; }
+  uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
 
   void begin(FILESYSTEM& fs, BaseSerialInterface& serial, mesh::RNG& trng) {
     _fs = &fs;
@@ -427,8 +432,8 @@ public:
       int i = 0;
       out_frame[i++] = RESP_CODE_SELF_INFO;
       out_frame[i++] = ADV_TYPE_CHAT;   // what this node Advert identifies as (maybe node's pronouns too?? :-)
-      out_frame[i++] = 0;  // reserved
-      out_frame[i++] = 0;  // reserved
+      out_frame[i++] = _prefs.tx_power_dbm;
+      out_frame[i++] = MAX_LORA_TX_POWER;
       memcpy(&out_frame[i], self_id.pub_key, PUB_KEY_SIZE); i += PUB_KEY_SIZE;
       int32_t latlonsats = 0;
       memcpy(&out_frame[i], &latlonsats, 4); i += 4;   // reserved future, for companion radios with GPS (like T-Beam, T1000)
@@ -594,6 +599,14 @@ public:
       } else {
         writeErrFrame();
       }
+    } else if (cmd_frame[0] == CMD_SET_RADIO_TX_POWER) {
+      if (cmd_frame[1] > MAX_LORA_TX_POWER) {
+        writeErrFrame();
+      } else {
+        _prefs.tx_power_dbm = cmd_frame[1];
+        savePrefs();
+        writeOKFrame();  // reboot now required!
+      }
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
@@ -728,6 +741,9 @@ void setup() {
   }
   if (LORA_CR != the_mesh.getCRPref()) {
     radio.setCodingRate(the_mesh.getCRPref());
+  }
+  if (LORA_TX_POWER != the_mesh.getTxPowerPref()) {
+    radio.setOutputPower(the_mesh.getTxPowerPref());
   }
 }
 
