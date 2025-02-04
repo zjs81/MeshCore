@@ -96,3 +96,24 @@ float RadioLibWrapper::getLastRSSI() const {
 float RadioLibWrapper::getLastSNR() const {
   return _radio->getSNR();
 }
+
+// Approximate SNR threshold per SF for successful reception (based on Semtech datasheets)
+static float snr_threshold[] = {
+    -7.5,  // SF7 needs at least -7.5 dB SNR
+    -10,   // SF8 needs at least -10 dB SNR
+    -12.5, // SF9 needs at least -12.5 dB SNR
+    -15,  // SF10 needs at least -15 dB SNR
+    -17.5,// SF11 needs at least -17.5 dB SNR
+    -20   // SF12 needs at least -20 dB SNR
+};
+  
+float RadioLibWrapper::packetScoreInt(float snr, int sf, int packet_len) {
+  if (sf < 7) return 0.0f;
+  
+  if (snr < snr_threshold[sf - 7]) return 0.0f;    // Below threshold, no chance of success
+
+  auto success_rate_based_on_snr = (snr - snr_threshold[sf - 7]) / 10.0;
+  auto collision_penalty = 1 - (packet_len / 256.0);   // Assuming max packet of 256 bytes
+
+  return max(0.0, min(1.0, success_rate_based_on_snr * collision_penalty));
+}

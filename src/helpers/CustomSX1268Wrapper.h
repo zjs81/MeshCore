@@ -21,11 +21,6 @@ public:
 
   float packetScore(float snr, int packet_len) override {
     int sf = ((CustomSX1268 *)_radio)->spreadingFactor;
-    const float A = 0.7;
-    const float B = 0.4;
-  
-    float ber = exp(-pow(10, (snr / 10)) / (A * pow(10, (snr / 10)) + B * (1 << sf)));
-
-    return pow(1 - ber, packet_len * 8);
+    return packetScoreInt(snr, sf, packet_len);
   }
 };

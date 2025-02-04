@@ -97,8 +97,8 @@ mesh::Packet* StaticPoolPacketManager::removeOutboundByIdx(int i) {
 }
 
 void StaticPoolPacketManager::queueInbound(mesh::Packet* packet, uint32_t scheduled_for) {
-  // TODO
+  rx_queue.add(packet, 0, scheduled_for);
 }
 mesh::Packet* StaticPoolPacketManager::getNextInbound(uint32_t now) {
-  return NULL;  // TODO
+  return rx_queue.get(now);
 }

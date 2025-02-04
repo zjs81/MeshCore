@@ -10,6 +10,7 @@ protected:
   uint32_t n_recv, n_sent;
 
   void idle();
+  float packetScoreInt(float snr, int sf, int packet_len);
 
 public:
   RadioLibWrapper(PhysicalLayer& radio, mesh::MainBoard& board) : _radio(&radio), _board(&board) { n_recv = n_sent = 0; }
@@ -26,7 +27,7 @@ public:
   virtual float getLastRSSI() const override;
   virtual float getLastSNR() const override;
 
-  float packetScore(float snr, int packet_len) override { return 0.85f; }  // stub impl
+  float packetScore(float snr, int packet_len) override { return packetScoreInt(snr, 10, packet_len); }  // assume sf=10
 };
 
 /**
