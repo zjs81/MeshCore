@@ -174,9 +174,9 @@ class MyMesh : public BaseChatMesh {
           success = success && (file.read((uint8_t *) &c.out_path_len, 1) == 1);
           success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
           success = success && (file.read(c.out_path, 64) == 64);
-          success = success && (file.read((uint8_t *) c.lastmod, 4) == 4);
-          success = success && (file.read((uint8_t *) c.gps_lat, 4) == 4);
-          success = success && (file.read((uint8_t *) c.gps_lon, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.lastmod, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.gps_lat, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.gps_lon, 4) == 4);
 
           if (!success) break;  // EOF
 
