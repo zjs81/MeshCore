@@ -493,6 +493,15 @@ public:
         _prefs.node_lon = atof(&config[4]);
         savePrefs();
         strcpy(reply, "OK");
+      } else if (memcmp(config, "rxdelay ", 8) == 0) {
+        float db = atof(&config[8]);
+        if (db >= 0) {
+          _prefs.rx_delay_base = db;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error, cannot be negative");
+        }
       } else if (memcmp(config, "tx ", 3) == 0) {
         _prefs.tx_power_dbm = atoi(&config[3]);
         savePrefs();
