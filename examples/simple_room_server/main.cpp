@@ -144,6 +144,7 @@ struct NodePrefs {  // persisted to file
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
   FILESYSTEM* _fs;
+  mesh::MainBoard* _board;
   NodePrefs _prefs;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
@@ -482,8 +483,8 @@ protected:
   }
 
 public:
-  MyMesh(RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
-     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
+  MyMesh(mesh::MainBoard& board, RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
+     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables), _board(&board)
   {
     my_radio = &radio;
 
@@ -567,6 +568,12 @@ public:
         strcpy(reply, "OK - clock set");
       } else {
         strcpy(reply, "ERR: clock cannot go backwards");
+      }
+    } else if (memcmp(command, "start ota", 9) == 0) {
+      if (_board->startOTAUpdate()) {
+        strcpy(reply, "OK");
+      } else {
+        strcpy(reply, "Error");
       }
     } else if (memcmp(command, "clock", 5) == 0) {
       uint32_t now = getRTCClock()->getCurrentTime();
@@ -689,7 +696,7 @@ ESP32RTCClock rtc_clock;
 VolatileRTCClock rtc_clock; 
 #endif
 
-MyMesh the_mesh(*new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, rtc_clock, tables);
+MyMesh the_mesh(board, *new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, rtc_clock, tables);
 
 void halt() {
   while (1) ;
