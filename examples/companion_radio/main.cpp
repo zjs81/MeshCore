@@ -42,6 +42,10 @@
   #define MAX_CONTACTS         100
 #endif
 
+#ifndef OFFLINE_QUEUE_SIZE
+  #define OFFLINE_QUEUE_SIZE  16
+#endif
+
 #include <helpers/BaseChatMesh.h>
 
 #define SEND_TIMEOUT_BASE_MILLIS          300
@@ -142,6 +146,13 @@ class MyMesh : public BaseChatMesh {
   bool  _iter_started;
   uint8_t cmd_frame[MAX_FRAME_SIZE+1];
   uint8_t out_frame[MAX_FRAME_SIZE+1];
+
+  struct Frame {
+    uint8_t len;
+    uint8_t buf[MAX_FRAME_SIZE];
+  };
+  int offline_queue_len;
+  Frame offline_queue[OFFLINE_QUEUE_SIZE];
 
   void loadContacts() {
     if (_fs->exists("/contacts3")) {
@@ -254,9 +265,25 @@ class MyMesh : public BaseChatMesh {
   }
 
   void addToOfflineQueue(const uint8_t frame[], int len) {
-    // TODO
+    if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
+      MESH_DEBUG_PRINTLN("ERROR: offline_queue is full!");
+    } else {
+      offline_queue[offline_queue_len].len = len;
+      memcpy(offline_queue[offline_queue_len].buf, frame, len);
+      offline_queue_len++;
+    }
   }
   int getFromOfflineQueue(uint8_t frame[]) {
+    if (offline_queue_len > 0) {   // check offline queue
+      size_t len = offline_queue[0].len;   // take from top of queue
+      memcpy(frame, offline_queue[0].buf, len);
+
+      offline_queue_len--;
+      for (int i = 0; i < offline_queue_len; i++) {   // delete top item from queue
+        offline_queue[i] = offline_queue[i + 1];
+      }
+      return len;
+    }
     return 0;  // queue is empty
   }
 
@@ -364,6 +391,7 @@ public:
      : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables), _serial(NULL)
   {
     _iter_started = false;
+    offline_queue_len = 0;
 
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
