@@ -57,7 +57,7 @@ void PacketQueue::add(mesh::Packet* packet, uint8_t priority, uint32_t scheduled
   _num++;
 }
 
-StaticPoolPacketManager::StaticPoolPacketManager(int pool_size): unused(pool_size), send_queue(pool_size) {
+StaticPoolPacketManager::StaticPoolPacketManager(int pool_size): unused(pool_size), send_queue(pool_size), rx_queue(pool_size) {
   // load up our unusued Packet pool
   for (int i = 0; i < pool_size; i++) {
     unused.add(new mesh::Packet(), 0, 0);
@@ -94,4 +94,11 @@ mesh::Packet* StaticPoolPacketManager::getOutboundByIdx(int i) {
 }
 mesh::Packet* StaticPoolPacketManager::removeOutboundByIdx(int i) {
   return send_queue.removeByIdx(i);
+}
+
+void StaticPoolPacketManager::queueInbound(mesh::Packet* packet, uint32_t scheduled_for) {
+  // TODO
+}
+mesh::Packet* StaticPoolPacketManager::getNextInbound(uint32_t now) {
+  return NULL;  // TODO
 }

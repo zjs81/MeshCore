@@ -121,6 +121,7 @@ struct NodePrefs {  // persisted to file
   float freq;
   uint8_t tx_power_dbm;
   uint8_t unused[3];
+  float rx_delay_base;
 };
 
 class MyMesh : public mesh::Mesh {
@@ -191,6 +192,10 @@ protected:
 
   bool allowPacketForward(const mesh::Packet* packet) override {
     return true;   // Yes, allow packet to be forwarded
+  }
+
+  int calcRxDelay(float score, uint32_t air_time) const override {
+    return (int) ((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
   }
 
   void onAnonDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Identity& sender, uint8_t* data, size_t len) override {
@@ -371,6 +376,7 @@ public:
 
     // defaults
     _prefs.airtime_factor = 1.0;    // one half
+    _prefs.rx_delay_base = 10.0;
     strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
     _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
     _prefs.node_lat = ADVERT_LAT;

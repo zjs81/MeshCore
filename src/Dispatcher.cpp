@@ -4,6 +4,8 @@
   #include <Arduino.h>
 #endif
 
+#include <math.h>
+
 namespace mesh {
 
 void Dispatcher::begin() {
@@ -16,6 +18,10 @@ void Dispatcher::begin() {
 
 float Dispatcher::getAirtimeBudgetFactor() const {
   return 2.0;   // default, 33.3%  (1/3rd)
+}
+
+int Dispatcher::calcRxDelay(float score, uint32_t air_time) const {
+  return (int) ((pow(10, 0.85f - score) - 1.0) * air_time);
 }
 
 void Dispatcher::loop() {
@@ -47,6 +53,13 @@ void Dispatcher::loop() {
     }
   }
 
+  // check inbound (delayed) queue
+  {
+    Packet* pkt = _mgr->getNextInbound(_ms->getMillis());
+    if (pkt) {
+      processRecvPacket(pkt);
+    }
+  }
   checkRecv();
   checkSend();
 }
@@ -57,6 +70,8 @@ void Dispatcher::onPacketSent(Packet* packet) {
 
 void Dispatcher::checkRecv() {
   Packet* pkt;
+  float score;
+  uint32_t air_time;
   {
     uint8_t raw[MAX_TRANS_UNIT];
     int len = _radio->recvRaw(raw, MAX_TRANS_UNIT);
@@ -87,6 +102,9 @@ void Dispatcher::checkRecv() {
 
           pkt->payload_len = len - i;  // payload is remainder
           memcpy(pkt->payload, &raw[i], pkt->payload_len);
+
+          score = _radio->packetScore(_radio->getLastSNR(), len);
+          air_time = _radio->getEstAirtimeFor(len);
         }
       }
     } else {
@@ -94,27 +112,41 @@ void Dispatcher::checkRecv() {
     }
   }
   if (pkt) {
+    #if MESH_PACKET_LOGGING      
+      Serial.printf("PACKET: recv, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d\n", 
+            2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
+            (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
+    #endif
+
     if (pkt->isRouteFlood()) {
       n_recv_flood++;
+
+      int _delay = calcRxDelay(score, air_time);
+      if (_delay < 50) {
+        MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(), score delay below threshold (%d)", _delay);
+        processRecvPacket(pkt);   // is below the score delay threshold, so process immediately
+      } else {
+        MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(), score delay is: %d millis", _delay);
+        _mgr->queueInbound(pkt, futureMillis(_delay)); // add to delayed inbound queue
+      }
     } else {
       n_recv_direct++;
+      processRecvPacket(pkt);
     }
-    #if MESH_PACKET_LOGGING
-      Serial.printf("PACKET: recv, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d\n", 
-            2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
-            (int)_radio->getLastSNR(), (int)_radio->getLastRSSI());
-    #endif
-    DispatcherAction action = onRecvPacket(pkt);
-    if (action == ACTION_RELEASE) {
-      _mgr->free(pkt);
-    } else if (action == ACTION_MANUAL_HOLD) {
-      // sub-class is wanting to manually hold Packet instance, and call releasePacket() at appropriate time
-    } else {   // ACTION_RETRANSMIT*
-      uint8_t priority = (action >> 24) - 1;
-      uint32_t _delay = action & 0xFFFFFF;
+  }
+}
 
-      _mgr->queueOutbound(pkt, priority, futureMillis(_delay));
-    }
+void Dispatcher::processRecvPacket(Packet* pkt) {
+  DispatcherAction action = onRecvPacket(pkt);
+  if (action == ACTION_RELEASE) {
+    _mgr->free(pkt);
+  } else if (action == ACTION_MANUAL_HOLD) {
+    // sub-class is wanting to manually hold Packet instance, and call releasePacket() at appropriate time
+  } else {   // ACTION_RETRANSMIT*
+    uint8_t priority = (action >> 24) - 1;
+    uint32_t _delay = action & 0xFFFFFF;
+
+    _mgr->queueOutbound(pkt, priority, futureMillis(_delay));
   }
 }
 

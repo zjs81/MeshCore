@@ -36,6 +36,8 @@ public:
   */
   virtual uint32_t getEstAirtimeFor(int len_bytes) = 0;
 
+  virtual float packetScore(float snr, int packet_len) = 0;
+
   /**
    * \brief  starts the raw packet send. (no wait)
    * \param  bytes   the raw packet data
@@ -77,6 +79,8 @@ public:
   virtual int getFreeCount() const = 0;
   virtual Packet* getOutboundByIdx(int i) = 0;
   virtual Packet* removeOutboundByIdx(int i) = 0;
+  virtual void queueInbound(Packet* packet, uint32_t scheduled_for) = 0;
+  virtual Packet* getNextInbound(uint32_t now) = 0;
 };
 
 typedef uint32_t  DispatcherAction;
@@ -98,6 +102,8 @@ class Dispatcher {
   uint32_t n_recv_flood, n_recv_direct;
   uint32_t n_full_events;
 
+  void processRecvPacket(Packet* pkt);
+
 protected:
   PacketManager* _mgr;
   Radio* _radio;
@@ -112,6 +118,7 @@ protected:
   virtual DispatcherAction onRecvPacket(Packet* pkt) = 0;
   virtual void onPacketSent(Packet* packet);
   virtual float getAirtimeBudgetFactor() const;
+  virtual int calcRxDelay(float score, uint32_t air_time) const;
 
 public:
   void begin();

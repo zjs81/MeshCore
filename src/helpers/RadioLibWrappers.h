@@ -25,6 +25,8 @@ public:
   uint32_t getPacketsSent() const { return n_sent; }
   virtual float getLastRSSI() const override;
   virtual float getLastSNR() const override;
+
+  float packetScore(float snr, int packet_len) override { return 0.85f; }  // stub impl
 };
 
 /**
