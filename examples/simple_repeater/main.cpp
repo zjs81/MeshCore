@@ -120,7 +120,8 @@ struct NodePrefs {  // persisted to file
   char password[16];
   float freq;
   uint8_t tx_power_dbm;
-  uint8_t unused[3];
+  uint8_t disable_fwd;
+  uint8_t unused[2];
 };
 
 class MyMesh : public mesh::Mesh {
@@ -190,7 +191,7 @@ protected:
   }
 
   bool allowPacketForward(const mesh::Packet* packet) override {
-    return true;   // Yes, allow packet to be forwarded
+    return !_prefs.disable_fwd;
   }
 
   void onAnonDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Identity& sender, uint8_t* data, size_t len) override {
@@ -370,6 +371,7 @@ public:
     num_clients = 0;
 
     // defaults
+    memset(&_prefs, 0, sizeof(_prefs));
     _prefs.airtime_factor = 1.0;    // one half
     strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
     _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
@@ -379,7 +381,6 @@ public:
     _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
-    memset(_prefs.unused, 0, sizeof(_prefs.unused));
   }
 
   float getFreqPref() const { return _prefs.freq; }
@@ -479,6 +480,10 @@ public:
         _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
         savePrefs();
         strcpy(reply, "OK");
+      } else if (memcmp(config, "repeat ", 7) == 0) {
+        _prefs.disable_fwd = memcmp(&config[7], "off", 3) == 0;
+        savePrefs();
+        strcpy(reply, _prefs.disable_fwd ? "OK - repeat is now OFF" : "OK - repeat is now ON");
       } else if (memcmp(config, "lat ", 4) == 0) {
         _prefs.node_lat = atof(&config[4]);
         savePrefs();
