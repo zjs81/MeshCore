@@ -18,7 +18,7 @@
 
 // built-ins
 #define  PIN_VBAT_READ    5
-#define  ADC_MULTIPLIER   (3 * 1.73 * 1000)
+#define  ADC_MULTIPLIER   (3 * 1.73 * 1.187 * 1000)
 
 class RAK4631Board : public mesh::MainBoard {
 protected:
