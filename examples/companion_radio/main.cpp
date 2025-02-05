@@ -110,6 +110,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_SENT              6   // reply to CMD_SEND_TXT_MSG
 #define RESP_CODE_CONTACT_MSG_RECV  7   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_CHANNEL_MSG_RECV  8   // a reply to CMD_SYNC_NEXT_MESSAGE
+#define RESP_CODE_CURR_TIME         9   // a reply to CMD_GET_DEVICE_TIME
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -562,7 +563,7 @@ public:
       writeOKFrame();
     } else if (cmd_frame[0] == CMD_GET_DEVICE_TIME) {
       uint8_t reply[5];
-      reply[0] = RESP_CODE_OK;
+      reply[0] = RESP_CODE_CURR_TIME;
       uint32_t now = getRTCClock()->getCurrentTime();
       memcpy(&reply[1], &now, 4);
       _serial->writeFrame(reply, 5);
