@@ -123,6 +123,7 @@ struct NodePrefs {  // persisted to file
   uint8_t disable_fwd;
   uint8_t unused[2];
   float rx_delay_base;
+  float tx_delay_factor;
 };
 
 class MyMesh : public mesh::Mesh {
@@ -197,6 +198,11 @@ protected:
 
   int calcRxDelay(float score, uint32_t air_time) const override {
     return (int) ((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
+  }
+
+  uint32_t getRetransmitDelay(const mesh::Packet* packet) override {
+    uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.tx_delay_factor);
+    return getRNG()->nextInt(0, 6)*t;
   }
 
   void onAnonDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Identity& sender, uint8_t* data, size_t len) override {
@@ -379,6 +385,7 @@ public:
     memset(&_prefs, 0, sizeof(_prefs));
     _prefs.airtime_factor = 1.0;    // one half
     _prefs.rx_delay_base = 10.0;
+    _prefs.tx_delay_factor = 0.25f;
     strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
     _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
     _prefs.node_lat = ADVERT_LAT;
@@ -502,6 +509,15 @@ public:
         float db = atof(&config[8]);
         if (db >= 0) {
           _prefs.rx_delay_base = db;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error, cannot be negative");
+        }
+      } else if (memcmp(config, "txdelay ", 8) == 0) {
+        float f = atof(&config[8]);
+        if (f >= 0) {
+          _prefs.tx_delay_factor = f;
           savePrefs();
           strcpy(reply, "OK");
         } else {
