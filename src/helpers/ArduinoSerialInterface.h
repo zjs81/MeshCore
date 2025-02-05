@@ -8,13 +8,21 @@ class ArduinoSerialInterface : public BaseSerialInterface {
   uint8_t _state;
   uint16_t _frame_len;
   uint16_t rx_len;
+#ifdef LILYGO_T3S3
+  HWCDC* _serial;
+#else
   HardwareSerial* _serial;
+#endif
   uint8_t rx_buf[MAX_FRAME_SIZE];
 
 public:
   ArduinoSerialInterface() { _isEnabled = false; _state = 0; }
 
+#ifdef LILYGO_T3S3
+  void begin(HWCDC& serial) { _serial = &serial; }
+#else
   void begin(HardwareSerial& serial) { _serial = &serial; }
+#endif
 
   // BaseSerialInterface methods
   void enable() override;

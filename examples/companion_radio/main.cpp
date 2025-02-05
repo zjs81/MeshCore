@@ -64,7 +64,7 @@
   #include <helpers/CustomSX1262Wrapper.h>
   #include <helpers/CustomSX1268Wrapper.h>
   static XiaoC3Board board;
-#elif defined(SEEED_XIAO_S3)
+#elif defined(SEEED_XIAO_S3) || defined(LILYGO_T3S3)
   #include <helpers/ESP32Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
   static ESP32Board board;
@@ -110,6 +110,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_SENT              6   // reply to CMD_SEND_TXT_MSG
 #define RESP_CODE_CONTACT_MSG_RECV  7   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_CHANNEL_MSG_RECV  8   // a reply to CMD_SYNC_NEXT_MESSAGE
+#define RESP_CODE_CURR_TIME         9   // a reply to CMD_GET_DEVICE_TIME
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -174,9 +175,9 @@ class MyMesh : public BaseChatMesh {
           success = success && (file.read((uint8_t *) &c.out_path_len, 1) == 1);
           success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
           success = success && (file.read(c.out_path, 64) == 64);
-          success = success && (file.read((uint8_t *) c.lastmod, 4) == 4);
-          success = success && (file.read((uint8_t *) c.gps_lat, 4) == 4);
-          success = success && (file.read((uint8_t *) c.gps_lon, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.lastmod, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.gps_lat, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.gps_lon, 4) == 4);
 
           if (!success) break;  // EOF
 
@@ -562,7 +563,7 @@ public:
       writeOKFrame();
     } else if (cmd_frame[0] == CMD_GET_DEVICE_TIME) {
       uint8_t reply[5];
-      reply[0] = RESP_CODE_OK;
+      reply[0] = RESP_CODE_CURR_TIME;
       uint32_t now = getRTCClock()->getCurrentTime();
       memcpy(&reply[1], &now, 4);
       _serial->writeFrame(reply, 5);
