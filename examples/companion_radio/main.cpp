@@ -619,8 +619,8 @@ public:
       memcpy(&freq, &cmd_frame[i], 4); i += 4;
       uint32_t bw;
       memcpy(&bw, &cmd_frame[i], 4); i += 4;
-      uint8_t sf = out_frame[i++];
-      uint8_t cr = out_frame[i++];
+      uint8_t sf = cmd_frame[i++];
+      uint8_t cr = cmd_frame[i++];
 
       if (freq >= 300000 && freq <= 2500000 && sf >= 7 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 && bw <= 500000) {
         _prefs.sf = sf;
@@ -630,6 +630,7 @@ public:
         savePrefs();
         writeOKFrame();  // reboot now required!
       } else {
+        MESH_DEBUG_PRINTLN("Error: CMD_SET_RADIO_PARAMS: f=%d, bw=%d, sf=%d, cr=%d", freq, bw, (uint32_t)sf, (uint32_t)cr);
         writeErrFrame();
       }
     } else if (cmd_frame[0] == CMD_SET_RADIO_TX_POWER) {
