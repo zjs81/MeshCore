@@ -111,6 +111,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_CONTACT_MSG_RECV  7   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_CHANNEL_MSG_RECV  8   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_CURR_TIME         9   // a reply to CMD_GET_DEVICE_TIME
+#define RESP_CODE_NO_MORE_MESSAGES 10   // a reply to CMD_SYNC_NEXT_MESSAGE
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -571,7 +572,7 @@ public:
       uint32_t secs;
       memcpy(&secs, &cmd_frame[1], 4);
       uint32_t curr = getRTCClock()->getCurrentTime();
-      if (secs > curr) {
+      if (secs >= curr) {
         getRTCClock()->setCurrentTime(secs);
         writeOKFrame();
       } else {
@@ -612,6 +613,9 @@ public:
       int out_len;
       if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
         _serial->writeFrame(out_frame, out_len);
+      } else {
+        out_frame[0] = RESP_CODE_NO_MORE_MESSAGES;
+        _serial->writeFrame(out_frame, 1);
       }
     } else if (cmd_frame[0] == CMD_SET_RADIO_PARAMS) {
       int i = 1;
