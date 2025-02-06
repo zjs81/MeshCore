@@ -181,7 +181,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     pTxCharacteristic->setValue(send_queue[0].buf, send_queue[0].len);
     pTxCharacteristic->notify();
 
-    BLE_DEBUG_PRINTLN("writeBytes: sz=%d", (uint32_t)send_queue[0].len);
+    BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
 
     send_queue_len--;
     for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
@@ -192,6 +192,8 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   if (recv_queue_len > 0) {   // check recv queue
     size_t len = recv_queue[0].len;   // take from top of queue
     memcpy(dest, recv_queue[0].buf, len);
+
+    BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
 
     recv_queue_len--;
     for (int i = 0; i < recv_queue_len; i++) {   // delete top item from queue
