@@ -8,6 +8,8 @@
 
 namespace mesh {
 
+#define MAX_RX_DELAY_MILLIS   32000  // 32 seconds
+
 void Dispatcher::begin() {
   n_sent_flood = n_sent_direct = 0;
   n_recv_flood = n_recv_direct = 0;
@@ -127,6 +129,9 @@ void Dispatcher::checkRecv() {
         processRecvPacket(pkt);   // is below the score delay threshold, so process immediately
       } else {
         MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(), score delay is: %d millis", _delay);
+        if (_delay > MAX_RX_DELAY_MILLIS) {
+          _delay = MAX_RX_DELAY_MILLIS;
+        }
         _mgr->queueInbound(pkt, futureMillis(_delay)); // add to delayed inbound queue
       }
     } else {
