@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v4 (build: 4 Feb 2025)"
+#define FIRMWARE_VER_TEXT   "v4 (build: 8 Feb 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -58,6 +58,8 @@
 #ifndef MAX_UNSYNCED_POSTS
   #define MAX_UNSYNCED_POSTS    16
 #endif
+
+#define MIN_LOCAL_ADVERT_INTERVAL   8
 
 
 #if defined(HELTEC_LORA_V3)
@@ -138,12 +140,14 @@ struct NodePrefs {  // persisted to file
   float freq;
   uint8_t tx_power_dbm;
   uint8_t disable_fwd;
-  uint8_t unused[2];
+  uint8_t advert_interval;   // minutes
+  uint8_t unused;
 };
 
 class MyMesh : public mesh::Mesh {
   RadioLibWrapper* my_radio;
   FILESYSTEM* _fs;
+  unsigned long next_local_advert;
   NodePrefs _prefs;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
@@ -240,6 +244,31 @@ class MyMesh : public mesh::Mesh {
       }
     }
     return false;
+  }
+
+  void checkAdvertInterval() {
+    if (_prefs.advert_interval < MIN_LOCAL_ADVERT_INTERVAL) {
+      _prefs.advert_interval = 0;  // turn it off, now that device has been manually configured
+    }
+  }
+
+  void updateAdvertTimer() {
+    if (_prefs.advert_interval > 0) {  // schedule local advert timer
+      next_local_advert = futureMillis(_prefs.advert_interval * 60 * 1000);
+    } else {
+      next_local_advert = 0;  // stop the timer
+    }
+  }
+
+  mesh::Packet* createSelfAdvert() {
+    uint8_t app_data[MAX_ADVERT_DATA_SIZE];
+    uint8_t app_data_len;
+    {
+      AdvertDataBuilder builder(ADV_TYPE_ROOM, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
+      app_data_len = builder.encodeTo(app_data);
+    }
+
+   return createAdvert(self_id, app_data, app_data_len);
   }
 
 protected:
@@ -480,6 +509,7 @@ public:
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     my_radio = &radio;
+    next_local_advert = 0;
 
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
@@ -493,6 +523,7 @@ public:
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
     _prefs.disable_fwd = 1;
+    _prefs.advert_interval = 2;  // default to 2 minutes for NEW installs
 
     num_clients = 0;
     next_post_idx = 0;
@@ -515,6 +546,8 @@ public:
         file.close();
       }
     }
+
+    updateAdvertTimer();
   }
 
   void savePrefs() {
@@ -530,17 +563,10 @@ public:
     }
   }
 
-  void sendSelfAdvertisement() {
-    uint8_t app_data[MAX_ADVERT_DATA_SIZE];
-    uint8_t app_data_len;
-    {
-      AdvertDataBuilder builder(ADV_TYPE_ROOM, _prefs.node_name, _prefs.node_lat, _prefs.node_lon);
-      app_data_len = builder.encodeTo(app_data);
-    }
-
-    mesh::Packet* pkt = createAdvert(self_id, app_data, app_data_len);
+  void sendSelfAdvertisement(int delay_millis) {
+    mesh::Packet* pkt = createSelfAdvert();
     if (pkt) {
-      sendFlood(pkt, 1200);  // add slight delay
+      sendFlood(pkt, delay_millis);
     } else {
       MESH_DEBUG_PRINTLN("ERROR: unable to create advertisement packet!");
     }
@@ -552,7 +578,7 @@ public:
     if (memcmp(command, "reboot", 6) == 0) {
       board.reboot();  // doesn't return
     } else if (memcmp(command, "advert", 6) == 0) {
-      sendSelfAdvertisement();
+      sendSelfAdvertisement(400);
       strcpy(reply, "OK - Advert sent");
     } else if (memcmp(command, "clock sync", 10) == 0) {
       uint32_t curr = getRTCClock()->getCurrentTime();
@@ -587,6 +613,18 @@ public:
         _prefs.airtime_factor = atof(&config[3]);
         savePrefs();
         strcpy(reply, "OK");
+      } else if (memcmp(config, "advert.interval ", 16) == 0) {
+        int mins = _atoi(&config[16]);
+        if (mins > 0 && mins < MIN_LOCAL_ADVERT_INTERVAL) {
+          sprintf(reply, "Error: min is %d mins", MIN_LOCAL_ADVERT_INTERVAL);
+        } else if (mins > 120) {
+          strcpy(reply, "Error: max is 120 mins");
+        } else {
+          _prefs.advert_interval = (uint8_t)mins;
+          updateAdvertTimer();
+          savePrefs();
+          strcpy(reply, "OK");
+        }
       } else if (memcmp(config, "name ", 5) == 0) {
         strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
         _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
@@ -655,6 +693,15 @@ public:
       next_client_idx = (next_client_idx + 1) % num_clients;  // round robin polling for each client
 
       next_push = futureMillis(SYNC_PUSH_INTERVAL);
+    }
+
+    if (next_local_advert && millisHasNowPassed(next_local_advert)) {
+      mesh::Packet* pkt = createSelfAdvert();
+      if (pkt) {
+        sendZeroHop(pkt);
+      }
+
+      updateAdvertTimer();   // schedule next local advert
     }
 
     // TODO: periodically check for OLD/inactive entries in known_clients[], and evict
@@ -760,7 +807,7 @@ void setup() {
   }
 
   // send out initial Advertisement to the mesh
-  the_mesh.sendSelfAdvertisement();
+  the_mesh.sendSelfAdvertisement(2000);
 }
 
 void loop() {
