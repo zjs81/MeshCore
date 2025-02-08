@@ -48,9 +48,9 @@
 
 #include <helpers/BaseChatMesh.h>
 
-#define SEND_TIMEOUT_BASE_MILLIS          300
+#define SEND_TIMEOUT_BASE_MILLIS          500
 #define FLOOD_SEND_TIMEOUT_FACTOR         16.0f
-#define DIRECT_SEND_PERHOP_FACTOR         4.0f
+#define DIRECT_SEND_PERHOP_FACTOR         6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS   200
 
 #define  PUBLIC_GROUP_PSK  "izOH6cXN6mrJ5e26oRXNcg=="
@@ -100,6 +100,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_SYNC_NEXT_MESSAGE     10
 #define CMD_SET_RADIO_PARAMS      11
 #define CMD_SET_RADIO_TX_POWER    12
+#define CMD_RESET_PATH            13
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -589,6 +590,17 @@ public:
         writeOKFrame();
       } else {
         writeErrFrame();
+      }
+    } else if (cmd_frame[0] == CMD_RESET_PATH && len >= 1+32) {
+      uint8_t* pub_key = &cmd_frame[1];
+      ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+      if (recipient) {
+        recipient->out_path_len = -1;
+        //recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
+        saveContacts();
+        writeOKFrame();
+      } else {
+        writeErrFrame();  // unknown contact
       }
     } else if (cmd_frame[0] == CMD_ADD_UPDATE_CONTACT && len >= 1+32+2+1) {
       uint8_t* pub_key = &cmd_frame[1];
