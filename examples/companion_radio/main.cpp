@@ -138,6 +138,7 @@ struct NodePrefs {  // persisted to file
 
 class MyMesh : public BaseChatMesh {
   FILESYSTEM* _fs;
+  RADIO_CLASS* _phy;
   NodePrefs _prefs;
   uint32_t expected_ack_crc;  // TODO: keep table of expected ACKs
   mesh::GroupChannel* _public;
@@ -390,8 +391,8 @@ protected:
 
 public:
 
-  MyMesh(RadioLibWrapper& radio, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
-     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables), _serial(NULL)
+  MyMesh(RADIO_CLASS& phy, RadioLibWrapper& rw, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
+     : BaseChatMesh(rw, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables), _serial(NULL), _phy(&phy)
   {
     _iter_started = false;
     offline_queue_len = 0;
@@ -406,12 +407,6 @@ public:
     _prefs.cr = LORA_CR;
     _prefs.tx_power_dbm = LORA_TX_POWER;
   }
-
-  float getFreqPref() const { return _prefs.freq; }
-  uint8_t getSFPref() const { return _prefs.sf; }
-  uint8_t getCRPref() const { return _prefs.cr; }
-  float getBWPref() const { return _prefs.bw; }
-  uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
 
   void begin(FILESYSTEM& fs, BaseSerialInterface& serial, mesh::RNG& trng) {
     _fs = &fs;
@@ -440,6 +435,12 @@ public:
 
     loadContacts();
     _public = addChannel(PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
+
+    _phy->setFrequency(_prefs.freq);
+    _phy->setSpreadingFactor(_prefs.sf);
+    _phy->setBandwidth(_prefs.bw);
+    _phy->setCodingRate(_prefs.cr);
+    _phy->setOutputPower(_prefs.tx_power_dbm);
   }
 
   void savePrefs() {
@@ -644,7 +645,14 @@ public:
         _prefs.freq = (float)freq / 1000.0;
         _prefs.bw = (float)bw / 1000.0;
         savePrefs();
-        writeOKFrame();  // reboot now required!
+
+        _phy->setFrequency(_prefs.freq);
+        _phy->setSpreadingFactor(_prefs.sf);
+        _phy->setBandwidth(_prefs.bw);
+        _phy->setCodingRate(_prefs.cr);
+        MESH_DEBUG_PRINTLN("OK: CMD_SET_RADIO_PARAMS: f=%d, bw=%d, sf=%d, cr=%d", freq, bw, (uint32_t)sf, (uint32_t)cr);
+
+        writeOKFrame();
       } else {
         MESH_DEBUG_PRINTLN("Error: CMD_SET_RADIO_PARAMS: f=%d, bw=%d, sf=%d, cr=%d", freq, bw, (uint32_t)sf, (uint32_t)cr);
         writeErrFrame();
@@ -655,7 +663,8 @@ public:
       } else {
         _prefs.tx_power_dbm = cmd_frame[1];
         savePrefs();
-        writeOKFrame();  // reboot now required!
+        _phy->setOutputPower(_prefs.tx_power_dbm);
+        writeOKFrame(); 
       }
     } else {
       writeErrFrame();
@@ -718,7 +727,7 @@ RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BU
 #endif
 StdRNG fast_rng;
 SimpleMeshTables tables;
-MyMesh the_mesh(*new WRAPPER_CLASS(radio, board), fast_rng, *new VolatileRTCClock(), tables);
+MyMesh the_mesh(radio, *new WRAPPER_CLASS(radio, board), fast_rng, *new VolatileRTCClock(), tables);
 
 void halt() {
   while (1) ;
@@ -779,22 +788,6 @@ void setup() {
 #else
   #error "need to define filesystem"
 #endif
-
-  if (LORA_FREQ != the_mesh.getFreqPref()) {
-    radio.setFrequency(the_mesh.getFreqPref());
-  }
-  if (LORA_SF != the_mesh.getSFPref()) {
-    radio.setSpreadingFactor(the_mesh.getSFPref());
-  }
-  if (LORA_BW != the_mesh.getBWPref()) {
-    radio.setBandwidth(the_mesh.getBWPref());
-  }
-  if (LORA_CR != the_mesh.getCRPref()) {
-    radio.setCodingRate(the_mesh.getCRPref());
-  }
-  if (LORA_TX_POWER != the_mesh.getTxPowerPref()) {
-    radio.setOutputPower(the_mesh.getTxPowerPref());
-  }
 }
 
 void loop() {
