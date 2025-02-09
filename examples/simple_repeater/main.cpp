@@ -51,7 +51,7 @@
   #define  ADMIN_PASSWORD  "password"
 #endif
 
-#define MIN_LOCAL_ADVERT_INTERVAL   8
+#define MIN_LOCAL_ADVERT_INTERVAL   60
 
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
@@ -123,7 +123,7 @@ struct NodePrefs {  // persisted to file
   float freq;
   uint8_t tx_power_dbm;
   uint8_t disable_fwd;
-  uint8_t advert_interval;   // minutes
+  uint8_t advert_interval;   // minutes / 2
   uint8_t unused;
   float rx_delay_base;
   float tx_delay_factor;
@@ -192,14 +192,14 @@ class MyMesh : public mesh::Mesh {
   }
 
   void checkAdvertInterval() {
-    if (_prefs.advert_interval < MIN_LOCAL_ADVERT_INTERVAL) {
+    if (_prefs.advert_interval * 2 < MIN_LOCAL_ADVERT_INTERVAL) {
       _prefs.advert_interval = 0;  // turn it off, now that device has been manually configured
     }
   }
 
   void updateAdvertTimer() {
     if (_prefs.advert_interval > 0) {  // schedule local advert timer
-      next_local_advert = futureMillis(_prefs.advert_interval * 60 * 1000);
+      next_local_advert = futureMillis((uint32_t)_prefs.advert_interval * 2 * 60 * 1000);
     } else {
       next_local_advert = 0;  // stop the timer
     }
@@ -425,7 +425,7 @@ public:
     _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
-    _prefs.advert_interval = 2;  // default to 2 minutes for NEW installs
+    _prefs.advert_interval = 1;  // default to 2 minutes for NEW installs
   }
 
   float getFreqPref() const { return _prefs.freq; }
@@ -533,10 +533,10 @@ public:
         int mins = _atoi(&config[16]);
         if (mins > 0 && mins < MIN_LOCAL_ADVERT_INTERVAL) {
           sprintf(reply, "Error: min is %d mins", MIN_LOCAL_ADVERT_INTERVAL);
-        } else if (mins > 120) {
-          strcpy(reply, "Error: max is 120 mins");
+        } else if (mins > 240) {
+          strcpy(reply, "Error: max is 240 mins");
         } else {
-          _prefs.advert_interval = (uint8_t)mins;
+          _prefs.advert_interval = (uint8_t)(mins / 2);
           updateAdvertTimer();
           savePrefs();
           strcpy(reply, "OK");
