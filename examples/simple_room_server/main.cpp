@@ -142,6 +142,7 @@ struct NodePrefs {  // persisted to file
   uint8_t disable_fwd;
   uint8_t advert_interval;   // minutes
   uint8_t unused;
+  char guest_password[16];
 };
 
 class MyMesh : public mesh::Mesh {
@@ -291,12 +292,11 @@ protected:
         is_admin = true;
       } else {
         is_admin = false;
-    #ifdef ROOM_PASSWORD
-        if (memcmp(&data[8], ROOM_PASSWORD, strlen(ROOM_PASSWORD)) != 0) {  // check the room/public password
+        int len = strlen(_prefs.guest_password);
+        if (len > 0 && memcmp(&data[8], _prefs.guest_password, len) != 0) {  // check the room/public password
           MESH_DEBUG_PRINTLN("Incorrect room password");
           return;   // no response. Client will timeout
         }
-    #endif
       }
 
       auto client = putClient(sender);  // add to known clients (if not already known)
@@ -524,6 +524,10 @@ public:
     _prefs.tx_power_dbm = LORA_TX_POWER;
     _prefs.disable_fwd = 1;
     _prefs.advert_interval = 2;  // default to 2 minutes for NEW installs
+  #ifdef ROOM_PASSWORD
+    strncpy(_prefs.guest_password, ROOM_PASSWORD, sizeof(_prefs.guest_password)-1);
+    _prefs.guest_password[sizeof(_prefs.guest_password)-1] = 0;  // truncate if necessary
+  #endif
 
     num_clients = 0;
     next_post_idx = 0;
@@ -625,6 +629,11 @@ public:
           savePrefs();
           strcpy(reply, "OK");
         }
+      } else if (memcmp(config, "guest.password ", 15) == 0) {
+        strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password)-1);
+        _prefs.guest_password[sizeof(_prefs.guest_password)-1] = 0;  // truncate if necessary
+        savePrefs();
+        strcpy(reply, "OK");
       } else if (memcmp(config, "name ", 5) == 0) {
         strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
         _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
