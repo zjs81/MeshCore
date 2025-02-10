@@ -106,7 +106,8 @@ struct ClientInfo {
   mesh::Identity id;
   uint32_t last_timestamp;
   uint8_t secret[PUB_KEY_SIZE];
-  int out_path_len;
+  bool    is_admin;
+  int8_t  out_path_len;
   uint8_t out_path[MAX_PATH_SIZE];
 };
 
@@ -127,6 +128,7 @@ struct NodePrefs {  // persisted to file
   uint8_t unused;
   float rx_delay_base;
   float tx_delay_factor;
+  char guest_password[16];
 };
 
 class MyMesh : public mesh::Mesh {
@@ -159,14 +161,7 @@ class MyMesh : public mesh::Mesh {
     memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
 
     switch (payload[0]) {
-      case CMD_GET_STATS: {
-        uint32_t max_age_secs;
-        if (payload_len >= 5) {
-          memcpy(&max_age_secs, &payload[1], 4);    // first param in request pkt
-        } else {
-          max_age_secs = 12*60*60;   // default, 12 hours
-        }
-
+      case CMD_GET_STATS: {   // guests can also access this now
         RepeaterStats stats;
         stats.batt_milli_volts = board.getBattMilliVolts();
         stats.curr_tx_queue_len = _mgr->getOutboundCount();
@@ -240,38 +235,47 @@ protected:
       uint32_t timestamp;
       memcpy(&timestamp, data, 4);
 
+      bool is_admin;
       if (memcmp(&data[4], _prefs.password, strlen(_prefs.password)) == 0) {  // check for valid password
-        auto client = putClient(sender);  // add to known clients (if not already known)
-        if (client == NULL || timestamp <= client->last_timestamp) {
-          MESH_DEBUG_PRINTLN("Client table full, or replay attack!");
-          return;  // FATAL: client table is full -OR- replay attack 
-        }
+        is_admin = true;
+      } else if (memcmp(&data[4], _prefs.guest_password, strlen(_prefs.guest_password)) == 0) {  // check guest password
+        is_admin = false;
+      } else {
+    #if MESH_DEBUG
+        data[len] = 0;  // ensure null terminator
+        MESH_DEBUG_PRINTLN("Invalid password: %s", &data[4]);
+    #endif
+        return;
+      }
 
-        MESH_DEBUG_PRINTLN("Login success!");
-        client->last_timestamp = timestamp;
+      auto client = putClient(sender);  // add to known clients (if not already known)
+      if (client == NULL || timestamp <= client->last_timestamp) {
+        MESH_DEBUG_PRINTLN("Client table full, or replay attack!");
+        return;  // FATAL: client table is full -OR- replay attack 
+      }
 
-        uint32_t now = getRTCClock()->getCurrentTime();
-        memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
-        memcpy(&reply_data[4], "OK", 2);
+      MESH_DEBUG_PRINTLN("Login success!");
+      client->last_timestamp = timestamp;
+      client->is_admin = is_admin;
 
-        if (packet->isRouteFlood()) {
-          // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
-          mesh::Packet* path = createPathReturn(sender, client->secret, packet->path, packet->path_len,
-                                                PAYLOAD_TYPE_RESPONSE, reply_data, 4 + 2);
-          if (path) sendFlood(path);
-        } else {
-          mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, client->secret, reply_data, 4 + 2);
-          if (reply) {
-            if (client->out_path_len >= 0) {  // we have an out_path, so send DIRECT
-              sendDirect(reply, client->out_path, client->out_path_len);
-            } else {
-              sendFlood(reply);
-            }
+      uint32_t now = getRTCClock()->getCurrentTime();
+      memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
+      memcpy(&reply_data[4], "OK", 2);
+
+      if (packet->isRouteFlood()) {
+        // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
+        mesh::Packet* path = createPathReturn(sender, client->secret, packet->path, packet->path_len,
+                                              PAYLOAD_TYPE_RESPONSE, reply_data, 4 + 2);
+        if (path) sendFlood(path);
+      } else {
+        mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, client->secret, reply_data, 4 + 2);
+        if (reply) {
+          if (client->out_path_len >= 0) {  // we have an out_path, so send DIRECT
+            sendDirect(reply, client->out_path, client->out_path_len);
+          } else {
+            sendFlood(reply);
           }
         }
-      } else {
-        data[4+8] = 0;  // ensure null terminator
-        MESH_DEBUG_PRINTLN("Incorrect password: %s", &data[4]);
       }
     }
   }
@@ -333,7 +337,7 @@ protected:
       } else {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: possible replay attack detected");
       }
-    } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {   // a CLI command
+    } else if (type == PAYLOAD_TYPE_TXT_MSG && len > 5 && client->is_admin) {   // a CLI command
       uint32_t sender_timestamp;
       memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
       uint flags = (data[4] >> 2);   // message attempt number, and other flags
@@ -541,6 +545,11 @@ public:
           savePrefs();
           strcpy(reply, "OK");
         }
+      } else if (memcmp(config, "guest.password ", 15) == 0) {
+        strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password)-1);
+        _prefs.guest_password[sizeof(_prefs.guest_password)-1] = 0;  // truncate if necessary
+        savePrefs();
+        strcpy(reply, "OK");
       } else if (memcmp(config, "name ", 5) == 0) {
         strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
         _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
