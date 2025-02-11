@@ -477,10 +477,13 @@ public:
       out_frame[i++] = _prefs.tx_power_dbm;
       out_frame[i++] = MAX_LORA_TX_POWER;
       memcpy(&out_frame[i], self_id.pub_key, PUB_KEY_SIZE); i += PUB_KEY_SIZE;
-      int32_t latlonsats = 0;
-      memcpy(&out_frame[i], &latlonsats, 4); i += 4;   // reserved future, for companion radios with GPS (like T-Beam, T1000)
-      memcpy(&out_frame[i], &latlonsats, 4); i += 4;
-      memcpy(&out_frame[i], &latlonsats, 4); i += 4;
+
+      int32_t lat, lon, alt = 0;
+      lat = (_prefs.node_lat * 1000000.0);
+      lon = (_prefs.node_lon * 1000000.0);
+      memcpy(&out_frame[i], &lat, 4); i += 4;
+      memcpy(&out_frame[i], &lon, 4); i += 4;
+      memcpy(&out_frame[i], &alt, 4); i += 4;
       
       uint32_t freq = _prefs.freq * 1000;
       memcpy(&out_frame[i], &freq, 4); i += 4;
