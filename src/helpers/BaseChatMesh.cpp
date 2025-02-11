@@ -281,6 +281,22 @@ bool BaseChatMesh::addContact(const ContactInfo& contact) {
   return false;
 }
 
+bool BaseChatMesh::removeContact(ContactInfo& contact) {
+  int idx = 0;
+  while (idx < num_contacts && !contacts[idx].id.matches(contact.id)) {
+    idx++;
+  }
+  if (idx >= num_contacts) return false;   // not found
+
+  // remove from contacts array
+  num_contacts--;
+  while (idx < num_contacts) {
+    contacts[idx] = contacts[idx + 1];
+    idx++;
+  }
+  return true;  // Success
+}
+
 #ifdef MAX_GROUP_CHANNELS
 #include <base64.hpp>
 

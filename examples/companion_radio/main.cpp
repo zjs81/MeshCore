@@ -101,6 +101,8 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_SET_RADIO_PARAMS      11
 #define CMD_SET_RADIO_TX_POWER    12
 #define CMD_RESET_PATH            13
+#define CMD_SET_ADVERT_LATLON     14
+#define CMD_REMOVE_CONTACT        15
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -564,6 +566,21 @@ public:
       _prefs.node_name[nlen] = 0; // null terminator
       savePrefs();
       writeOKFrame();
+    } else if (cmd_frame[0] == CMD_SET_ADVERT_LATLON && len >= 9) {
+      int32_t lat, lon, alt = 0;
+      memcpy(&lat, &cmd_frame[1], 4);
+      memcpy(&lon, &cmd_frame[5], 4);
+      if (len >= 13) {
+        memcpy(&alt, &cmd_frame[9], 4);  // for FUTURE support
+      }
+      if (lat <= 90*1E6 && lat >= -90*1E6 && lon <= 180*1E6 && lon >= -180*1E6) {
+        _prefs.node_lat = ((double)lat) / 1000000.0;
+        _prefs.node_lon = ((double)lon) / 1000000.0;
+        savePrefs();
+        writeOKFrame();
+      } else {
+        writeErrFrame();  // invalid geo coordinate
+      }
     } else if (cmd_frame[0] == CMD_GET_DEVICE_TIME) {
       uint8_t reply[5];
       reply[0] = RESP_CODE_CURR_TIME;
@@ -581,7 +598,7 @@ public:
         writeErrFrame();
       }
     } else if (cmd_frame[0] == CMD_SEND_SELF_ADVERT) {
-      auto pkt = createSelfAdvert(_prefs.node_name);
+      auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
       if (pkt) {
         if (len >= 2 && cmd_frame[1] == 1) {   // optional param (1 = flood, 0 = zero hop)
           sendFlood(pkt);
@@ -621,6 +638,15 @@ public:
         } else {
           writeErrFrame();  // table is full!
         }
+      }
+    } else if (cmd_frame[0] == CMD_REMOVE_CONTACT) {
+      uint8_t* pub_key = &cmd_frame[1];
+      ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+      if (recipient && removeContact(*recipient)) {
+        saveContacts();
+        writeOKFrame();
+      } else {
+        writeErrFrame();  // not found, or unable to remove
       }
     } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
       int out_len;
