@@ -220,6 +220,27 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
   return rc;
 }
 
+bool BaseChatMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name, const char* text, int text_len) {
+  uint8_t temp[5+MAX_TEXT_LEN+32];
+  memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  sprintf((char *) &temp[5], "%s: ", sender_name);  // <sender>: <msg>
+  char *ep = strchr((char *) &temp[5], 0);
+  int prefix_len = ep - (char *) &temp[5];
+
+  if (text_len + prefix_len > MAX_TEXT_LEN) text_len = MAX_TEXT_LEN - prefix_len;
+  memcpy(ep, text, text_len);
+  ep[text_len] = 0;  // null terminator
+
+  auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + prefix_len + text_len);
+  if (pkt) {
+    sendFlood(pkt);
+    return true;
+  }
+  return false;
+}
+
 void BaseChatMesh::resetPathTo(ContactInfo& recipient) {
   recipient.out_path_len = -1;
 }
