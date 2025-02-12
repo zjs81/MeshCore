@@ -10,6 +10,8 @@ class ArduinoSerialInterface : public BaseSerialInterface {
   uint16_t rx_len;
 #ifdef LILYGO_T3S3
   HWCDC* _serial;
+#elif defined(NRF52_PLATFORM)
+  Adafruit_USBD_CDC* _serial;
 #else
   HardwareSerial* _serial;
 #endif
@@ -20,6 +22,8 @@ public:
 
 #ifdef LILYGO_T3S3
   void begin(HWCDC& serial) { _serial = &serial; }
+#elif defined(NRF52_PLATFORM)
+  void begin(Adafruit_USBD_CDC& serial) { _serial = &serial; }
 #else
   void begin(HardwareSerial& serial) { _serial = &serial; }
 #endif

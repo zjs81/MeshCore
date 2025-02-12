@@ -741,7 +741,8 @@ public:
   #endif
 #elif defined(NRF52_PLATFORM)
   #ifdef BLE_PIN_CODE
-    #error "BLE not defined yet"
+    #include <helpers/nrf52/SerialBLEInterface.h>
+    SerialBLEInterface serial_interface;
   #else
     #include <helpers/ArduinoSerialInterface.h>
     ArduinoSerialInterface serial_interface;
@@ -805,6 +806,14 @@ void setup() {
 
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
+
+#ifdef BLE_PIN_CODE
+  serial_interface.begin("MeshCore", BLE_PIN_CODE);
+#else
+  pinMode(WB_IO2, OUTPUT);
+  serial_interface.begin(Serial);
+#endif
+  serial_interface.enable();
 
   the_mesh.begin(InternalFS, serial_interface, trng);
 #elif defined(ESP32)
