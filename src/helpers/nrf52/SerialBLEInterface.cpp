@@ -2,9 +2,16 @@
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   _pin_code = pin_code;
+  char charpin[20];
+  sprintf(charpin, "%d", _pin_code);
+
+  Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
 
   Bluefruit.begin();
   Bluefruit.setTxPower(4);    // Check bluefruit.h for supported values
+  Bluefruit.setName(device_name);
+
+  Bluefruit.Security.setPIN(charpin);
 
   // To be consistent OTA DFU should be added first if it exists
   //bledfu.begin();
@@ -107,6 +114,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   } else {
     int len = bleuart.available();
     if (len > 0) {
+      deviceConnected = true; // should probably use the callback to monitor cx 
       bleuart.readBytes(dest, len);
       BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
       return len;
