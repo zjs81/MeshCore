@@ -417,9 +417,8 @@ public:
     _prefs.tx_power_dbm = LORA_TX_POWER;
   }
 
-  void begin(FILESYSTEM& fs, BaseSerialInterface& serial, mesh::RNG& trng) {
+  void begin(FILESYSTEM& fs, mesh::RNG& trng) {
     _fs = &fs;
-    _serial = &serial;
 
     BaseChatMesh::begin();
 
@@ -450,6 +449,13 @@ public:
     _phy->setBandwidth(_prefs.bw);
     _phy->setCodingRate(_prefs.cr);
     _phy->setOutputPower(_prefs.tx_power_dbm);
+  }
+
+  const char* getNodeName() { return _prefs.node_name; }
+
+  void startInterface(BaseSerialInterface& serial) {
+    _serial = &serial;
+    serial.enable();
   }
 
   void savePrefs() {
@@ -802,27 +808,29 @@ void setup() {
 
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
+  the_mesh.begin(InternalFS, trng);
 
 #ifdef BLE_PIN_CODE
-  serial_interface.begin("MeshCore", BLE_PIN_CODE);
+  char dev_name[32+10];
+  sprintf(dev_name, "MeshCore-%s", the_mesh.getNodeName());
+  serial_interface.begin(dev_name, BLE_PIN_CODE);
 #else
   pinMode(WB_IO2, OUTPUT);
   serial_interface.begin(Serial);
 #endif
-  serial_interface.enable();
-
-  the_mesh.begin(InternalFS, serial_interface, trng);
+  the_mesh.startInterface(serial_interface);
 #elif defined(ESP32)
   SPIFFS.begin(true);
+  the_mesh.begin(SPIFFS, trng);
 
 #ifdef BLE_PIN_CODE
-  serial_interface.begin("MeshCore", BLE_PIN_CODE);
+  char dev_name[32+10];
+  sprintf(dev_name, "MeshCore-%s", the_mesh.getNodeName());
+  serial_interface.begin(dev_name, BLE_PIN_CODE);
 #else
   serial_interface.begin(Serial);
 #endif
-  serial_interface.enable();
-
-  the_mesh.begin(SPIFFS, serial_interface, trng);
+  the_mesh.startInterface(serial_interface);
 #else
   #error "need to define filesystem"
 #endif
