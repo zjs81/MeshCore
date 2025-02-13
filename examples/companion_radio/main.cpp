@@ -396,7 +396,6 @@ protected:
   }
 
   void onSendTimeout() override {
-    Serial.println("   ERROR: timed out, no ACK.");
   }
 
 public:

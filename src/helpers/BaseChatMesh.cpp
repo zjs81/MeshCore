@@ -270,10 +270,10 @@ bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password,
     uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);
     if (recipient.out_path_len < 0) {
       sendFlood(pkt);
-      txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
+      est_timeout = calcFloodTimeoutMillisFor(t);
     } else {
       sendDirect(pkt, recipient.out_path, recipient.out_path_len);
-      txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
+      est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
     }
   } else {
     return false;  // failed
