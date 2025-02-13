@@ -1,12 +1,11 @@
 #include "SerialBLEInterface.h"
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
-  _pin_code = pin_code;
   char charpin[20];
-  sprintf(charpin, "%d", _pin_code);
+  sprintf(charpin, "%d", pin_code);
 
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
-
+  Bluefruit.configPrphConn(250, BLE_GAP_EVENT_LENGTH_MIN, 16, 16);  // increase MTU
   Bluefruit.begin();
   Bluefruit.setTxPower(4);    // Check bluefruit.h for supported values
   Bluefruit.setName(device_name);

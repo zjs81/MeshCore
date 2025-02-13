@@ -9,7 +9,6 @@ class SerialBLEInterface : public BaseSerialInterface {
   bool oldDeviceConnected;
   bool checkAdvRestart;
   bool _isEnabled;
-  uint32_t _pin_code;
   unsigned long _last_write;
 
   struct Frame {
