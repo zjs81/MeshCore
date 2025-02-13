@@ -173,14 +173,13 @@ class MyMesh : public BaseChatMesh {
           ContactInfo c;
           uint8_t pub_key[32];
           uint8_t unused;
-          uint32_t reserved;
 
           bool success = (file.read(pub_key, 32) == 32);
           success = success && (file.read((uint8_t *) &c.name, 32) == 32);
           success = success && (file.read(&c.type, 1) == 1);
           success = success && (file.read(&c.flags, 1) == 1);
           success = success && (file.read(&unused, 1) == 1);
-          success = success && (file.read((uint8_t *) &reserved, 4) == 4);
+          success = success && (file.read((uint8_t *) &c.sync_since, 4) == 4);  // was 'reserved'
           success = success && (file.read((uint8_t *) &c.out_path_len, 1) == 1);
           success = success && (file.read((uint8_t *) &c.last_advert_timestamp, 4) == 4);
           success = success && (file.read(c.out_path, 64) == 64);
@@ -209,7 +208,6 @@ class MyMesh : public BaseChatMesh {
       ContactsIterator iter;
       ContactInfo c;
       uint8_t unused = 0;
-      uint32_t reserved = 0;
 
       while (iter.hasNext(this, c)) {
         bool success = (file.write(c.id.pub_key, 32) == 32);
@@ -217,7 +215,7 @@ class MyMesh : public BaseChatMesh {
         success = success && (file.write(&c.type, 1) == 1);
         success = success && (file.write(&c.flags, 1) == 1);
         success = success && (file.write(&unused, 1) == 1);
-        success = success && (file.write((uint8_t *) &reserved, 4) == 4);
+        success = success && (file.write((uint8_t *) &c.sync_since, 4) == 4);
         success = success && (file.write((uint8_t *) &c.out_path_len, 1) == 1);
         success = success && (file.write((uint8_t *) &c.last_advert_timestamp, 4) == 4);
         success = success && (file.write(c.out_path, 64) == 64);
@@ -382,6 +380,11 @@ protected:
     } else {
       soundBuzzer();
     }
+  }
+
+  void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override {
+    // TODO: check for login response
+    // TODO: check for Get Stats response
   }
 
   uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
@@ -632,6 +635,7 @@ public:
         ContactInfo contact;
         updateContactFromFrame(contact, cmd_frame, len);
         contact.lastmod = getRTCClock()->getCurrentTime();
+        contact.sync_since = 0;
         if (addContact(contact)) {
           saveContacts();
           writeOKFrame();

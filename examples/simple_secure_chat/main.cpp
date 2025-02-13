@@ -269,6 +269,10 @@ protected:
     Serial.printf("   %s\n", text);
   }
 
+  void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override {
+    // not supported
+  }
+
   uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
     return SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * pkt_airtime_millis);
   }

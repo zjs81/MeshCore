@@ -18,6 +18,7 @@ struct ContactInfo {
   uint8_t shared_secret[PUB_KEY_SIZE];
   uint32_t lastmod;  // by OUR clock
   int32_t gps_lat, gps_lon;    // 6 dec places
+  uint32_t sync_since;
 };
 
 #define MAX_SEARCH_RESULTS   8
@@ -82,6 +83,7 @@ protected:
   virtual uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const = 0;
   virtual void onSendTimeout() = 0;
   virtual void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) = 0;
+  virtual void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) = 0;
 
   // Mesh overrides
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;
@@ -99,6 +101,7 @@ public:
   mesh::Packet* createSelfAdvert(const char* name, double lat=0.0, double lon=0.0);
   int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack, uint32_t& est_timeout);
   bool sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name, const char* text, int text_len);
+  bool sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout);
   void resetPathTo(ContactInfo& recipient);
   void scanRecentContacts(int last_n, ContactVisitor* visitor);
   ContactInfo* searchContactsByPrefix(const char* name_prefix);

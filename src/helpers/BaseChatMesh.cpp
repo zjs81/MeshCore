@@ -40,6 +40,7 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
       from->out_path_len = -1;  // initially out_path is unknown
       from->gps_lat = 0;   // initially unknown GPS loc
       from->gps_lon = 0;
+      from->sync_since = 0;
 
       // only need to calculate the shared_secret once, for better performance
       self_id.calcSharedSecret(from->shared_secret, id);
@@ -84,15 +85,15 @@ void BaseChatMesh::getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) {
 }
 
 void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) {
+  int i = matching_peer_indexes[sender_idx];
+  if (i < 0 || i >= num_contacts) {
+    MESH_DEBUG_PRINTLN("onPeerDataRecv: Invalid sender idx: %d", i);
+    return;
+  }
+
+  ContactInfo& from = contacts[i];
+
   if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
-    int i = matching_peer_indexes[sender_idx];
-    if (i < 0 || i >= num_contacts) {
-      MESH_DEBUG_PRINTLN("onPeerDataRecv: Invalid sender idx: %d", i);
-      return;
-    }
-
-    ContactInfo& from = contacts[i];
-
     uint32_t timestamp;
     memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
     uint flags = data[4];   // message attempt number, and other flags
@@ -125,6 +126,8 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
     } else {
       MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported message type: %u", (uint32_t) (flags >> 2));
     }
+  } else if (type == PAYLOAD_TYPE_RESPONSE && len > 0) {
+    onContactResponse(from, data, len);
   }
 }
 
@@ -149,6 +152,8 @@ bool BaseChatMesh::onPeerPathRecv(mesh::Packet* packet, int sender_idx, const ui
     if (processAck(extra)) {
       txt_send_timeout = 0;   // matched one we're waiting for, cancel timeout timer
     }
+  } else if (extra_type == PAYLOAD_TYPE_RESPONSE && extra_len > 0) {
+    onContactResponse(from, extra, extra_len);
   }
   return true;  // send reciprocal path if necessary
 }
@@ -239,6 +244,41 @@ bool BaseChatMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& chan
     return true;
   }
   return false;
+}
+
+bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout) {
+  uint8_t shared_secret[32];
+  self_id.calcSharedSecret(shared_secret, recipient.id); // TODO: cache this
+
+  int tlen;
+  uint8_t temp[24];
+  uint32_t now = getRTCClock()->getCurrentTime();
+  memcpy(temp, &now, 4);   // mostly an extra blob to help make packet_hash unique
+  if (recipient.type == ADV_TYPE_ROOM) {
+    memcpy(&temp[4], &recipient.sync_since, 4);
+    int len = strlen(password); if (len > 15) len = 15;  // max 15 chars currently
+    memcpy(&temp[8], password, len);
+    tlen = 8 + len;
+  } else {
+    int len = strlen(password); if (len > 15) len = 15;  // max 15 chars currently
+    memcpy(&temp[4], password, len);
+    tlen = 4 + len;
+  }
+
+  auto pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, recipient.id, shared_secret, temp, tlen);
+  if (pkt) {
+    uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);
+    if (recipient.out_path_len < 0) {
+      sendFlood(pkt);
+      txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
+    } else {
+      sendDirect(pkt, recipient.out_path, recipient.out_path_len);
+      txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
+    }
+  } else {
+    return false;  // failed
+  }
+  return true;  // success
 }
 
 void BaseChatMesh::resetPathTo(ContactInfo& recipient) {
