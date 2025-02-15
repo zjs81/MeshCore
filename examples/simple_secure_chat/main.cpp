@@ -200,17 +200,8 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
       if (len % 2 == 0) {
         len >>= 1;  // halve, for num bytes
         if (mesh::Utils::fromHex(tmp_buf, len, command)) {
-          auto pkt = obtainNewPacket();
-          if (pkt) {
-            if (pkt->readFrom(tmp_buf, len) && pkt->getPayloadType() == PAYLOAD_TYPE_ADVERT) {
-              pkt->header |= ROUTE_TYPE_FLOOD;   // simulate it being received flood-mode
-              onRecvPacket(pkt);  // loop-back, as if received over radio
-              releasePacket(pkt);   // undo the obtainNewPacket()
-              return;
-            } else {
-              releasePacket(pkt);   // undo the obtainNewPacket()
-            }
-          }
+          importContact(tmp_buf, len);
+          return;
         }
       }
     }

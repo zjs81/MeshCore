@@ -108,6 +108,8 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_SET_ADVERT_LATLON     14
 #define CMD_REMOVE_CONTACT        15
 #define CMD_SHARE_CONTACT         16
+#define CMD_EXPORT_CONTACT        17
+#define CMD_IMPORT_CONTACT        18
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -120,6 +122,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_CHANNEL_MSG_RECV  8   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_CURR_TIME         9   // a reply to CMD_GET_DEVICE_TIME
 #define RESP_CODE_NO_MORE_MESSAGES 10   // a reply to CMD_SYNC_NEXT_MESSAGE
+#define RESP_CODE_EXPORT_CONTACT   11
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -712,6 +715,35 @@ public:
       } else {
         writeErrFrame();  // not found, or unable to send
       }
+    } else if (cmd_frame[0] == CMD_EXPORT_CONTACT) {
+      if (len < 1 + PUB_KEY_SIZE) {
+        // export SELF
+        auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
+        if (pkt) {
+          out_frame[0] = RESP_CODE_EXPORT_CONTACT;
+          uint8_t out_len =  pkt->writeTo(&out_frame[1]);
+          releasePacket(pkt);  // undo the obtainNewPacket()
+          _serial->writeFrame(out_frame, out_len + 1);
+        } else {
+          writeErrFrame();  // Error
+        }
+      } else {
+        uint8_t* pub_key = &cmd_frame[1];
+        ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+        uint8_t out_len;
+        if (recipient && (out_len = exportContact(*recipient, &out_frame[1])) > 0) {
+          out_frame[0] = RESP_CODE_EXPORT_CONTACT;
+          _serial->writeFrame(out_frame, out_len + 1);
+        } else {
+          writeErrFrame();  // not found
+        }
+      }
+    } else if (cmd_frame[0] == CMD_IMPORT_CONTACT && len > 2+32+64) {
+      if (importContact(&cmd_frame[1], len - 1)) {
+        writeOKFrame();
+      } else {
+        writeErrFrame();
+      }
     } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
       int out_len;
       if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
@@ -764,6 +796,7 @@ public:
 
   void loop() {
     BaseChatMesh::loop();
+
     size_t len = _serial->checkRecvFrame(cmd_frame);
     if (len > 0) {
       handleCmdFrame(len);

@@ -60,6 +60,7 @@ class BaseChatMesh : public mesh::Mesh {
   mesh::GroupChannel channels[MAX_GROUP_CHANNELS];
   int num_channels;
 #endif
+  mesh::Packet* _pendingLoopback;
   uint8_t temp_buf[MAX_TRANS_UNIT];
 
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack);
@@ -73,6 +74,7 @@ protected:
     num_channels = 0;
   #endif
     txt_send_timeout = 0;
+    _pendingLoopback = NULL;
   }
 
   // 'UI' concepts, for sub-classes to implement
@@ -108,6 +110,8 @@ public:
   bool sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name, const char* text, int text_len);
   bool sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout);
   bool shareContactZeroHop(const ContactInfo& contact);
+  uint8_t exportContact(const ContactInfo& contact, uint8_t dest_buf[]);
+  bool importContact(const uint8_t src_buf[], uint8_t len);
   void resetPathTo(ContactInfo& recipient);
   void scanRecentContacts(int last_n, ContactVisitor* visitor);
   ContactInfo* searchContactsByPrefix(const char* name_prefix);

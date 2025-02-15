@@ -262,6 +262,24 @@ bool BaseChatMesh::shareContactZeroHop(const ContactInfo& contact) {
   return true;  // success
 }
 
+uint8_t BaseChatMesh::exportContact(const ContactInfo& contact, uint8_t dest_buf[]) {
+  return getBlobByKey(contact.id.pub_key, PUB_KEY_SIZE, dest_buf);  // retrieve last raw advert packet
+}
+
+bool BaseChatMesh::importContact(const uint8_t src_buf[], uint8_t len) {
+  auto pkt = obtainNewPacket();
+  if (pkt) {
+    if (pkt->readFrom(src_buf, len) && pkt->getPayloadType() == PAYLOAD_TYPE_ADVERT) {
+      pkt->header |= ROUTE_TYPE_FLOOD;   // simulate it being received flood-mode
+      _pendingLoopback = pkt;  // loop-back, as if received over radio
+      return true;  // success
+    } else {
+      releasePacket(pkt);   // undo the obtainNewPacket()
+    }
+  }
+  return false; // error
+}
+
 bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout) {
   uint8_t shared_secret[32];
   self_id.calcSharedSecret(shared_secret, recipient.id); // TODO: cache this
@@ -415,5 +433,11 @@ void BaseChatMesh::loop() {
     // failed to get an ACK
     onSendTimeout();
     txt_send_timeout = 0;
+  }
+
+  if (_pendingLoopback) {
+    onRecvPacket(_pendingLoopback);  // loop-back, as if received over radio
+    releasePacket(_pendingLoopback);   // undo the obtainNewPacket()
+    _pendingLoopback = NULL;
   }
 }
