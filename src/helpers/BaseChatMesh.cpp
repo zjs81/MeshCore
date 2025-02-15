@@ -50,6 +50,10 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
     }
   }
 
+  // save a copy of raw advert packet (to support "Share..." function)
+  int plen = packet->writeTo(temp_buf);
+  putBlobByKey(id.pub_key, PUB_KEY_SIZE, temp_buf, plen);
+  
   // update
   strncpy(from->name, parser.getName(), sizeof(from->name)-1);
   from->name[sizeof(from->name)-1] = 0;
@@ -244,6 +248,18 @@ bool BaseChatMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& chan
     return true;
   }
   return false;
+}
+
+bool BaseChatMesh::shareContactZeroHop(const ContactInfo& contact) {
+  int plen = getBlobByKey(contact.id.pub_key, PUB_KEY_SIZE, temp_buf);  // retrieve last raw advert packet
+  if (plen == 0) return false;  // not found
+
+  auto packet = obtainNewPacket();
+  if (packet == NULL) return false;  // no Packets available
+
+  packet->readFrom(temp_buf, plen);  // restore Packet from 'blob'
+  sendZeroHop(packet);
+  return true;  // success
 }
 
 bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout) {

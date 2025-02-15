@@ -60,6 +60,7 @@ class BaseChatMesh : public mesh::Mesh {
   mesh::GroupChannel channels[MAX_GROUP_CHANNELS];
   int num_channels;
 #endif
+  uint8_t temp_buf[MAX_TRANS_UNIT];
 
   mesh::Packet* composeMsgPacket(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char *text, uint32_t& expected_ack);
 
@@ -85,6 +86,10 @@ protected:
   virtual void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) = 0;
   virtual void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) = 0;
 
+  // storage concepts, for sub-classes to override/implement
+  virtual int  getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) { return 0; }  // not implemented
+  virtual bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) { return false; }
+
   // Mesh overrides
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;
   int searchPeersByHash(const uint8_t* hash) override;
@@ -102,6 +107,7 @@ public:
   int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack, uint32_t& est_timeout);
   bool sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name, const char* text, int text_len);
   bool sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout);
+  bool shareContactZeroHop(const ContactInfo& contact);
   void resetPathTo(ContactInfo& recipient);
   void scanRecentContacts(int last_n, ContactVisitor* visitor);
   ContactInfo* searchContactsByPrefix(const char* name_prefix);

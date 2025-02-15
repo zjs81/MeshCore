@@ -107,6 +107,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_RESET_PATH            13
 #define CMD_SET_ADVERT_LATLON     14
 #define CMD_REMOVE_CONTACT        15
+#define CMD_SHARE_CONTACT         16
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -227,6 +228,49 @@ class MyMesh : public BaseChatMesh {
       }
       file.close();
     }
+  }
+
+  int  getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) override {
+    char path[64];
+    char fname[18];
+  
+    if (key_len > 8) key_len = 8;   // just use first 8 bytes (prefix)
+    mesh::Utils::toHex(fname, key, key_len);
+    sprintf(path, "/bl/%s", fname);
+  
+    if (_fs->exists(path)) {
+      File f = _fs->open(path);
+      if (f) {
+        int len = f.read(dest_buf, 255);  // currently MAX 255 byte blob len supported!!
+        f.close();
+        return len;
+      }
+    }
+    return 0;   // not found
+  }
+
+  bool putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], int len) override {
+    char path[64];
+    char fname[18];
+  
+    if (key_len > 8) key_len = 8;   // just use first 8 bytes (prefix)
+    mesh::Utils::toHex(fname, key, key_len);
+    sprintf(path, "/bl/%s", fname);
+  
+  #if defined(NRF52_PLATFORM)
+    File f = _fs->open(path, FILE_O_WRITE);
+    if (f) { f.seek(0); f.truncate(); }
+  #else
+    File f = _fs->open(path, "w", true);
+  #endif
+    if (f) {
+      int n = f.write(src_buf, len);
+      f.close();
+      if (n == len) return true;  // success!
+  
+      _fs->remove(path);   // blob was only partially written!
+    }
+    return false;  // error
   }
 
   void writeOKFrame() {
@@ -440,6 +484,9 @@ public:
         file.close();
       }
     }
+
+    // init 'blob store' support
+    _fs->mkdir("/bl");
 
     loadContacts();
     _public = addChannel(PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
@@ -656,6 +703,14 @@ public:
         writeOKFrame();
       } else {
         writeErrFrame();  // not found, or unable to remove
+      }
+    } else if (cmd_frame[0] == CMD_SHARE_CONTACT) {
+      uint8_t* pub_key = &cmd_frame[1];
+      ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+      if (recipient && shareContactZeroHop(*recipient)) {
+        writeOKFrame();
+      } else {
+        writeErrFrame();  // not found, or unable to send
       }
     } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
       int out_len;

@@ -119,8 +119,8 @@ struct PostInfo {
 };
 
 #define REPLY_DELAY_MILLIS         1500
-#define PUSH_NOTIFY_DELAY_MILLIS   1000
-#define SYNC_PUSH_INTERVAL         1000
+#define PUSH_NOTIFY_DELAY_MILLIS   2000
+#define SYNC_PUSH_INTERVAL         2000
 
 #define PUSH_ACK_TIMEOUT_FLOOD    12000
 #define PUSH_TIMEOUT_BASE          4000
