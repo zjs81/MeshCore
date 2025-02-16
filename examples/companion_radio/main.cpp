@@ -110,6 +110,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_SHARE_CONTACT         16
 #define CMD_EXPORT_CONTACT        17
 #define CMD_IMPORT_CONTACT        18
+#define CMD_REBOOT                19
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -788,6 +789,8 @@ public:
         _phy->setOutputPower(_prefs.tx_power_dbm);
         writeOKFrame(); 
       }
+    } else if (cmd_frame[0] == CMD_REBOOT) {
+      board.reboot();
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
