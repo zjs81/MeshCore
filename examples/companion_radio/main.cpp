@@ -111,6 +111,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_EXPORT_CONTACT        17
 #define CMD_IMPORT_CONTACT        18
 #define CMD_REBOOT                19
+#define CMD_GET_BATTERY_VOLTAGE   20
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -124,6 +125,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_CURR_TIME         9   // a reply to CMD_GET_DEVICE_TIME
 #define RESP_CODE_NO_MORE_MESSAGES 10   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_EXPORT_CONTACT   11
+#define RESP_CODE_BATTERY_VOLTAGE  12   // a reply to a CMD_GET_BATTERY_VOLTAGE
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -791,6 +793,12 @@ public:
       }
     } else if (cmd_frame[0] == CMD_REBOOT) {
       board.reboot();
+    } else if (cmd_frame[0] == CMD_GET_BATTERY_VOLTAGE) {
+      uint8_t reply[3];
+      reply[0] = RESP_CODE_BATTERY_VOLTAGE;
+      uint16_t battery_millivolts = board.getBattMilliVolts();
+      memcpy(&reply[1], &battery_millivolts, 2);
+      _serial->writeFrame(reply, 3);
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
