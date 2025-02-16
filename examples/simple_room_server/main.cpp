@@ -19,7 +19,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v4 (build: 14 Feb 2025)"
+#define FIRMWARE_VER_TEXT   "v4 (build: 17 Feb 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -527,8 +527,8 @@ public:
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
     _prefs.airtime_factor = 1.0;    // one half
-    _prefs.rx_delay_base = 10.0;
-    _prefs.tx_delay_factor = 0.25f;
+    _prefs.rx_delay_base = 0.0f;   // off by default, was 10.0
+    _prefs.tx_delay_factor = 0.5f;   // was 0.25f;
     strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
     _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
     _prefs.node_lat = ADVERT_LAT;

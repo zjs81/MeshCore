@@ -213,6 +213,10 @@ protected:
     return _prefs.airtime_factor;
   }
 
+  int calcRxDelay(float score, uint32_t air_time) const override {
+    return 0;  // disable rxdelay
+  }
+
   void onDiscoveredContact(ContactInfo& contact, bool is_new) override {
     // TODO: if not in favs,  prompt to add as fav(?)
 
