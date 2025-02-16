@@ -112,6 +112,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_IMPORT_CONTACT        18
 #define CMD_REBOOT                19
 #define CMD_GET_BATTERY_VOLTAGE   20
+#define CMD_SET_TUNING_PARAMS     21
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -147,6 +148,7 @@ struct NodePrefs {  // persisted to file
   float bw;
   uint8_t tx_power_dbm;
   uint8_t unused[3];
+  float rx_delay_base;
 };
 
 class MyMesh : public BaseChatMesh {
@@ -350,6 +352,15 @@ class MyMesh : public BaseChatMesh {
   }
 
 protected:
+  float getAirtimeBudgetFactor() const override {
+    return _prefs.airtime_factor;
+  }
+
+  int calcRxDelay(float score, uint32_t air_time) const override {
+    if (_prefs.rx_delay_base <= 0.0f) return 0;
+    return (int) ((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
+  }
+
   void onDiscoveredContact(ContactInfo& contact, bool is_new) override {
     if (_serial->isConnected()) {
       out_frame[0] = PUSH_CODE_ADVERT;
@@ -465,6 +476,7 @@ public:
     _prefs.bw = LORA_BW;
     _prefs.cr = LORA_CR;
     _prefs.tx_power_dbm = LORA_TX_POWER;
+    //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
   }
 
   void begin(FILESYSTEM& fs, mesh::RNG& trng) {
@@ -791,6 +803,13 @@ public:
         _phy->setOutputPower(_prefs.tx_power_dbm);
         writeOKFrame(); 
       }
+    } else if (cmd_frame[0] == CMD_SET_TUNING_PARAMS) {
+      int i = 1;
+      uint32_t rx;
+      memcpy(&rx, &cmd_frame[i], 4); i += 4;
+      _prefs.rx_delay_base = ((float)rx) / 1000.0f;
+      savePrefs();
+      writeOKFrame();
     } else if (cmd_frame[0] == CMD_REBOOT) {
       board.reboot();
     } else if (cmd_frame[0] == CMD_GET_BATTERY_VOLTAGE) {
