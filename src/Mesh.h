@@ -81,8 +81,18 @@ protected:
    * \param  type  one of: PAYLOAD_TYPE_TXT_MSG, PAYLOAD_TYPE_REQ, PAYLOAD_TYPE_RESPONSE
    * \param  sender_idx  index of peer, [0..n) where n is what searchPeersByHash() returned
    * \param  secret   the pre-calculated shared-secret (handy for sending response packet)
+   * \param  data   decrypted data from payload
   */
   virtual void onPeerDataRecv(Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) { }
+
+  /**
+   * \brief  A (now verified) TRACE packet has been received (by a known peer).
+   *         NOTE: these can be received multiple times (per sender/msg-id), via different routes
+   * \param  sender_idx  index of peer, [0..n) where n is what searchPeersByHash() returned
+   * \param  secret   the pre-calculated shared-secret (handy for sending response packet)
+   * \param  data   decrypted data from payload (fixed length, one CIPHER_BLOCK)
+  */
+  virtual void onPeerTraceRecv(Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* data) { }
 
   /**
    * \brief  A path TO peer (sender_idx) has been received. (also with optional 'extra' data encoded)

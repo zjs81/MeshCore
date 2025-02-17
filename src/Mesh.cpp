@@ -41,6 +41,16 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       // remove our hash from 'path', then re-broadcast
       pkt->path_len -= PATH_HASH_SIZE;
       memcpy(pkt->path, &pkt->path[PATH_HASH_SIZE], pkt->path_len);
+
+      if (pkt->getPayloadType() == PAYLOAD_TYPE_TRACE && pkt->payload_len + PATH_HASH_SIZE+1 < MAX_PACKET_PAYLOAD) {
+        if ((pkt->payload[0] & 3) == 0) {
+          // append our hash + SNR
+          pkt->payload_len += self_id.copyHashTo(&pkt->payload[pkt->payload_len]);
+          pkt->payload[pkt->payload_len++] = (int8_t) (pkt->getSNR()*4);
+        } else {
+          // unknown flags:type, don't append any info
+        }
+      }
       return ACTION_RETRANSMIT(0);   // Routed traffic is HIGHEST priority (and NO per-hop delay)
     }
     return ACTION_RELEASE;   // this node is NOT the next hop (OR this packet has already been forwarded), so discard.
@@ -61,16 +71,21 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       }
       break;
     }
+    case PAYLOAD_TYPE_TRACE:
     case PAYLOAD_TYPE_PATH:
     case PAYLOAD_TYPE_REQ:
     case PAYLOAD_TYPE_RESPONSE:
     case PAYLOAD_TYPE_TXT_MSG: {
       int i = 0;
+      if (pkt->getPayloadType() == PAYLOAD_TYPE_TRACE) {
+        //uint8_t flags = pkt->payload[i];    // reserved for now
+        i++;   // skip over
+      }
       uint8_t dest_hash = pkt->payload[i++];
       uint8_t src_hash = pkt->payload[i++];
 
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
-      if (i + 2 >= pkt->payload_len) {
+      if (i + CIPHER_MAC_SIZE >= pkt->payload_len) {
         MESH_DEBUG_PRINTLN("Mesh::onRecvPacket(): incomplete data packet");
       } else if (!_tables->hasSeen(pkt)) {
         // NOTE: this is a 'first packet wins' impl. When receiving from multiple paths, the first to arrive wins.
@@ -88,7 +103,12 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
             // decrypt, checking MAC is valid
             uint8_t data[MAX_PACKET_PAYLOAD];
-            int len = Utils::MACThenDecrypt(secret, data, macAndData, pkt->payload_len - i);
+            int len;
+            if (pkt->getPayloadType() == PAYLOAD_TYPE_TRACE) {
+              len = Utils::MACThenDecrypt(secret, data, macAndData, CIPHER_MAC_SIZE+CIPHER_BLOCK_SIZE);  // encrypted part is fixed-len
+            } else {
+              len = Utils::MACThenDecrypt(secret, data, macAndData, pkt->payload_len - i);
+            }
             if (len > 0) {  // success!
               if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH) {
                 int k = 0;
@@ -104,6 +124,8 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
                     if (rpath) sendDirect(rpath, path, path_len);
                   }
                 }
+              } else if (pkt->getPayloadType() == PAYLOAD_TYPE_TRACE) {
+                onPeerTraceRecv(pkt, j, secret, data);
               } else {
                 onPeerDataRecv(pkt, pkt->getPayloadType(), j, secret, data, len);
               }
@@ -227,6 +249,16 @@ DispatcherAction Mesh::routeRecvPacket(Packet* packet) {
     // append this node's hash to 'path'
     packet->path_len += self_id.copyHashTo(&packet->path[packet->path_len]);
 
+    if (packet->getPayloadType() == PAYLOAD_TYPE_TRACE && (packet->payload[0] & 3) != 0) {
+      // flags:type must be zero (otherwise, some future/unknown sub-type)
+      return ACTION_RELEASE;  // don't forward, just discard
+    }
+
+    if (packet->getPayloadType() == PAYLOAD_TYPE_TRACE && packet->payload_len + 1 < MAX_PACKET_PAYLOAD) {
+      // append packet SNR
+      packet->payload[packet->payload_len++] = (int8_t) (packet->getSNR()*4);
+    }
+
     uint32_t d = getRetransmitDelay(packet);
     // as this propagates outwards, give it lower and lower priority
     return ACTION_RETRANSMIT_DELAYED(packet->path_len, d);   // give priority to closer sources, than ones further away
@@ -316,8 +348,8 @@ Packet* Mesh::createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, 
 }
 
 Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* secret, const uint8_t* data, size_t data_len) {
-  if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE) {
-    if (data_len + 2 + CIPHER_BLOCK_SIZE-1 > MAX_PACKET_PAYLOAD) return NULL;
+  if (type == PAYLOAD_TYPE_TXT_MSG || type == PAYLOAD_TYPE_REQ || type == PAYLOAD_TYPE_RESPONSE || type == PAYLOAD_TYPE_TRACE) {
+    if (data_len + CIPHER_MAC_SIZE + CIPHER_BLOCK_SIZE-1 > MAX_PACKET_PAYLOAD) return NULL;
   } else {
     return NULL;  // invalid type
   }
@@ -330,6 +362,9 @@ Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* 
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
 
   int len = 0;
+  if (type == PAYLOAD_TYPE_TRACE) {
+    packet->payload[len++] = 0;  // reserved: flags:type
+  }
   len += dest.copyHashTo(&packet->payload[len]);  // dest hash
   len += self_id.copyHashTo(&packet->payload[len]);  // src hash
   len += Utils::encryptThenMAC(secret, &packet->payload[len], data, data_len);

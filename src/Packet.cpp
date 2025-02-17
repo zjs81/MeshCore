@@ -10,12 +10,15 @@ Packet::Packet() {
   payload_len = 0;
 }
 
-
 void Packet::calculatePacketHash(uint8_t* hash) const {
   SHA256 sha;
   uint8_t t = getPayloadType();
   sha.update(&t, 1);
-  sha.update(payload, payload_len);
+  if (t == PAYLOAD_TYPE_TRACE) {
+    sha.update(payload, 3+CIPHER_MAC_SIZE+CIPHER_BLOCK_SIZE);   // the 'content' part of TRACE packets is just the fixed-len encrypted part
+  } else {
+    sha.update(payload, payload_len);
+  }
   sha.finalize(hash, MAX_HASH_SIZE);
 }
 

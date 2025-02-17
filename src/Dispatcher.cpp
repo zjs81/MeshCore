@@ -105,7 +105,7 @@ void Dispatcher::checkRecv() {
           pkt->payload_len = len - i;  // payload is remainder
           memcpy(pkt->payload, &raw[i], pkt->payload_len);
 
-          score = _radio->packetScore(_radio->getLastSNR(), len);
+          score = _radio->packetScore(pkt->_snr = _radio->getLastSNR(), len);
           air_time = _radio->getEstAirtimeFor(len);
         }
       }
@@ -117,7 +117,7 @@ void Dispatcher::checkRecv() {
     #if MESH_PACKET_LOGGING      
       Serial.printf("PACKET: recv, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d\n", 
             2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
-            (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
+            (int)pkt->getSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
     #endif
 
     if (pkt->isRouteFlood()) {
@@ -198,6 +198,7 @@ Packet* Dispatcher::obtainNewPacket() {
     n_full_events++;
   } else {
     pkt->payload_len = pkt->path_len = 0;
+    pkt->_snr = 0;
   }
   return pkt;
 }
