@@ -117,9 +117,9 @@ protected:
 
   virtual DispatcherAction onRecvPacket(Packet* pkt) = 0;
 
-  virtual void logRx(Packet* packet, float score) { }   // hooks for custom logging
-  virtual void logTx(Packet* packet) { }
-  virtual void logTxFail(Packet* packet) { }
+  virtual void logRx(Packet* packet, int len, float score) { }   // hooks for custom logging
+  virtual void logTx(Packet* packet, int len) { }
+  virtual void logTxFail(Packet* packet, int len) { }
 
   virtual float getAirtimeBudgetFactor() const;
   virtual int calcRxDelay(float score, uint32_t air_time) const;

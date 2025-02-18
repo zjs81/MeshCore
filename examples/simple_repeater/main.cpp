@@ -246,36 +246,36 @@ protected:
     return !_prefs.disable_fwd;
   }
 
-  void logRx(mesh::Packet* pkt, float score) override {
+  void logRx(mesh::Packet* pkt, int len, float score) override {
     if (_logging) {
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
         f.print(get_curr_time_str());
         f.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d\n",
-          2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
+          len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
           (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
         f.close();
       }
     }
   }
-  void logTx(mesh::Packet* pkt) override {
+  void logTx(mesh::Packet* pkt, int len) override {
     if (_logging) {
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
         f.print(get_curr_time_str());
         f.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)\n", 
-          2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
+          len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
         f.close();
       }
     }
   }
-  void logTxFail(mesh::Packet* pkt) override {
+  void logTxFail(mesh::Packet* pkt, int len) override {
     if (_logging) {
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
         f.print(get_curr_time_str());
         f.printf(": TX FAIL!, len=%d (type=%d, route=%s, payload_len=%d)\n", 
-          2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
+          len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
         f.close();
       }
     }
