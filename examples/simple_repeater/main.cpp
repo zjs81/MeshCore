@@ -106,6 +106,7 @@ struct RepeaterStats {
   uint32_t n_sent_flood, n_sent_direct;
   uint32_t n_recv_flood, n_recv_direct;
   uint32_t n_full_events;
+  uint16_t n_direct_dups, n_flood_dups;
 };
 
 struct ClientInfo {
@@ -183,6 +184,8 @@ class MyMesh : public mesh::Mesh {
         stats.n_recv_flood = getNumRecvFlood();
         stats.n_recv_direct = getNumRecvDirect();
         stats.n_full_events = getNumFullEvents();
+        stats.n_direct_dups = ((SimpleMeshTables *)getTables())->getNumDirectDups();
+        stats.n_flood_dups = ((SimpleMeshTables *)getTables())->getNumFloodDups();
 
         memcpy(&reply_data[4], &stats, sizeof(stats));
 
@@ -467,7 +470,7 @@ protected:
   }
 
 public:
-  MyMesh(mesh::MainBoard& board, RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
+  MyMesh(mesh::MainBoard& board, RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables), _board(&board)
   {
     my_radio = &radio;
@@ -734,7 +737,7 @@ void setup() {
 #else
   float tcxo = 1.6f;
 #endif
-
+  
 #if defined(NRF52_PLATFORM)
   SPI.setPins(P_LORA_MISO, P_LORA_SCLK, P_LORA_MOSI);
   SPI.begin();

@@ -139,6 +139,8 @@ protected:
   {
   }
 
+  MeshTables* getTables() const { return _tables; }
+
 public:
   void begin();
   void loop();

@@ -11,11 +11,13 @@
 class SimpleMeshTables : public mesh::MeshTables {
   uint8_t _hashes[MAX_PACKET_HASHES*MAX_HASH_SIZE];
   int _next_idx;
+  uint32_t _direct_dups, _flood_dups;
 
 public:
   SimpleMeshTables() { 
     memset(_hashes, 0, sizeof(_hashes));
     _next_idx = 0;
+    _direct_dups = _flood_dups = 0;
   }
 
 #ifdef ESP32
@@ -35,7 +37,14 @@ public:
 
     const uint8_t* sp = _hashes;
     for (int i = 0; i < MAX_PACKET_HASHES; i++, sp += MAX_HASH_SIZE) {
-      if (memcmp(hash, sp, MAX_HASH_SIZE) == 0) return true;
+      if (memcmp(hash, sp, MAX_HASH_SIZE) == 0) { 
+        if (packet->isRouteDirect()) {
+          _direct_dups++;   // keep some stats
+        } else {
+          _flood_dups++;
+        }
+        return true;
+      }
     }
 
     memcpy(&_hashes[_next_idx*MAX_HASH_SIZE], hash, MAX_HASH_SIZE);
@@ -44,5 +53,7 @@ public:
     return false;
   }
 
+  uint32_t getNumDirectDups() const { return _direct_dups; }
+  uint32_t getNumFloodDups() const { return _flood_dups; }
 
 };
