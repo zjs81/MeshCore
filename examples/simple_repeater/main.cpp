@@ -251,9 +251,16 @@ protected:
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
         f.print(get_curr_time_str());
-        f.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d\n",
+        f.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d",
           len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
           (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
+
+        if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH || pkt->getPayloadType() == PAYLOAD_TYPE_REQ
+          || pkt->getPayloadType() == PAYLOAD_TYPE_RESPONSE || pkt->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
+          f.printf(" [%02X -> %02X]\n", (uint32_t)pkt->payload[1], (uint32_t)pkt->payload[0]);
+        } else {
+          f.printf("\n");
+        }
         f.close();
       }
     }
@@ -263,8 +270,15 @@ protected:
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
         f.print(get_curr_time_str());
-        f.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)\n", 
+        f.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)", 
           len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
+
+        if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH || pkt->getPayloadType() == PAYLOAD_TYPE_REQ
+          || pkt->getPayloadType() == PAYLOAD_TYPE_RESPONSE || pkt->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
+          f.printf(" [%02X -> %02X]\n", (uint32_t)pkt->payload[1], (uint32_t)pkt->payload[0]);
+        } else {
+          f.printf("\n");
+        }
         f.close();
       }
     }
