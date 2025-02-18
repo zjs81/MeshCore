@@ -78,6 +78,8 @@
   #error "need to provide a 'board' object"
 #endif
 
+#define PACKET_LOG_FILE  "/packet_log"
+
 /* ------------------------------ Code -------------------------------- */
 
 // Believe it or not, this std C function is busted on some platforms!
@@ -140,6 +142,7 @@ class MyMesh : public mesh::Mesh {
   FILESYSTEM* _fs;
   mesh::MainBoard* _board;
   unsigned long next_local_advert;
+  bool _logging;
   NodePrefs _prefs;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
@@ -215,6 +218,22 @@ class MyMesh : public mesh::Mesh {
    return createAdvert(self_id, app_data, app_data_len);
   }
 
+  File openAppend(const char* fname) {
+  #if defined(NRF52_PLATFORM)
+    return _fs->open(fname, FILE_O_WRITE);
+  #else
+    return _fs->open(fname, "a", true);
+  #endif
+  }
+
+  const char* get_curr_time_str() {
+    static char tmp[32];
+    uint32_t now = getRTCClock()->getCurrentTime();
+    DateTime dt = DateTime(now);
+    sprintf(tmp, "%02d:%02d:%02d - %d/%d/%d U", dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year());
+    return tmp;
+  }  
+
 protected:
   float getAirtimeBudgetFactor() const override {
     return _prefs.airtime_factor;
@@ -222,6 +241,41 @@ protected:
 
   bool allowPacketForward(const mesh::Packet* packet) override {
     return !_prefs.disable_fwd;
+  }
+
+  void logRx(mesh::Packet* pkt, float score) override {
+    if (_logging) {
+      File f = openAppend(PACKET_LOG_FILE);
+      if (f) {
+        f.print(get_curr_time_str());
+        f.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d\n",
+          2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
+          (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
+        f.close();
+      }
+    }
+  }
+  void logTx(mesh::Packet* pkt) override {
+    if (_logging) {
+      File f = openAppend(PACKET_LOG_FILE);
+      if (f) {
+        f.print(get_curr_time_str());
+        f.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)\n", 
+          2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
+        f.close();
+      }
+    }
+  }
+  void logTxFail(mesh::Packet* pkt) override {
+    if (_logging) {
+      File f = openAppend(PACKET_LOG_FILE);
+      if (f) {
+        f.print(get_curr_time_str());
+        f.printf(": TX FAIL!, len=%d (type=%d, route=%s, payload_len=%d)\n", 
+          2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
+        f.close();
+      }
+    }
   }
 
   int calcRxDelay(float score, uint32_t air_time) const override {
@@ -419,6 +473,7 @@ public:
     my_radio = &radio;
     num_clients = 0;
     next_local_advert = 0;
+    _logging = false;
 
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
@@ -614,6 +669,26 @@ public:
       sprintf(reply, "File system erase: %s", s ? "OK" : "Err");
     } else if (memcmp(command, "ver", 3) == 0) {
       strcpy(reply, FIRMWARE_VER_TEXT);
+    } else if (memcmp(command, "log start", 9) == 0) {
+      _logging = true;
+      strcpy(reply, "   logging on");
+    } else if (memcmp(command, "log stop", 8) == 0) {
+      _logging = false;
+      strcpy(reply, "   logging off");
+    } else if (memcmp(command, "log erase", 9) == 0) {
+      _fs->remove(PACKET_LOG_FILE);
+      strcpy(reply, "   log erased");
+    } else if (sender_timestamp == 0 && memcmp(command, "log", 3) == 0) {
+      File f = _fs->open(PACKET_LOG_FILE);
+      if (f) {
+        while (f.available()) {
+          int c = f.read();
+          if (c < 0) break;
+          Serial.print((char)c);
+        }
+        f.close();
+      }
+      strcpy(reply, "   EOF");
     } else {
       sprintf(reply, "Unknown: %s (commands: reboot, advert, clock, set, ver, password, start ota)", command);
     }

@@ -37,17 +37,20 @@ void Dispatcher::loop() {
       next_tx_time = futureMillis(t * getAirtimeBudgetFactor());
 
       _radio->onSendFinished();
-      onPacketSent(outbound);
+      logTx(outbound);
       if (outbound->isRouteFlood()) {
         n_sent_flood++;
       } else {
         n_sent_direct++;
       }
+      releasePacket(outbound);  // return to pool
       outbound = NULL;
     } else if (millisHasNowPassed(outbound_expiry)) {
       MESH_DEBUG_PRINTLN("Dispatcher::loop(): WARNING: outbound packed send timed out!");
 
       _radio->onSendFinished();
+      logTxFail(outbound);
+
       releasePacket(outbound);  // return to pool
       outbound = NULL;
     } else {
@@ -64,10 +67,6 @@ void Dispatcher::loop() {
   }
   checkRecv();
   checkSend();
-}
-
-void Dispatcher::onPacketSent(Packet* packet) {
-  releasePacket(packet);  // default behaviour, return packet to pool
 }
 
 void Dispatcher::checkRecv() {
@@ -119,6 +118,7 @@ void Dispatcher::checkRecv() {
             2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
             (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
     #endif
+    logRx(pkt, score);   // hook for custom logging
 
     if (pkt->isRouteFlood()) {
       n_recv_flood++;
