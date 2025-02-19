@@ -96,6 +96,9 @@ static uint32_t _atoi(const char* sp) {
 
 /*------------ Frame Protocol --------------*/
 
+#define FIRMWARE_VER_CODE    1
+#define FIRMWARE_BUILD_DATE   "19 Feb 2025"
+
 #define CMD_APP_START              1
 #define CMD_SEND_TXT_MSG           2
 #define CMD_SEND_CHANNEL_TXT_MSG   3
@@ -117,6 +120,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_REBOOT                19
 #define CMD_GET_BATTERY_VOLTAGE   20
 #define CMD_SET_TUNING_PARAMS     21
+#define CMD_DEVICE_QEURY          22
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -131,6 +135,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_NO_MORE_MESSAGES 10   // a reply to CMD_SYNC_NEXT_MESSAGE
 #define RESP_CODE_EXPORT_CONTACT   11
 #define RESP_CODE_BATTERY_VOLTAGE  12   // a reply to a CMD_GET_BATTERY_VOLTAGE
+#define RESP_CODE_DEVICE_INFO      13   // a reply to CMD_DEVICE_QEURY
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -167,6 +172,7 @@ class MyMesh : public BaseChatMesh {
   uint32_t _iter_filter_since;
   uint32_t _most_recent_lastmod;
   bool  _iter_started;
+  uint8_t app_target_ver;
   uint8_t cmd_frame[MAX_FRAME_SIZE+1];
   uint8_t out_frame[MAX_FRAME_SIZE+1];
 
@@ -470,6 +476,7 @@ public:
   {
     _iter_started = false;
     offline_queue_len = 0;
+    app_target_ver = 0;
 
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
@@ -541,12 +548,25 @@ public:
   }
 
   void handleCmdFrame(size_t len) {
-    if (cmd_frame[0] == CMD_APP_START && len >= 8) {   // sent when app establishes connection, respond with node ID
-      uint8_t app_ver = cmd_frame[1];
-      //  cmd_frame[2..7]  reserved future
+    if (cmd_frame[0] == CMD_DEVICE_QEURY && len >= 2) {  // sent when app establishes connection
+      app_target_ver = cmd_frame[1];   // which version of protocol does app understand
+
+      int i = 0;
+      out_frame[i++] = RESP_CODE_DEVICE_INFO;
+      out_frame[i++] = FIRMWARE_VER_CODE;
+      memset(&out_frame[i], 0, 6); i += 6;  // reserved
+      memset(&out_frame[i], 0, 12);
+      strcpy((char *) &out_frame[i], FIRMWARE_BUILD_DATE);
+      i += 12;
+      const char* name = board.getManufacturerName();
+      int tlen = strlen(name);
+      memcpy(&out_frame[i], name, tlen); i += tlen;
+      _serial->writeFrame(out_frame, i);
+    } else if (cmd_frame[0] == CMD_APP_START && len >= 8) {   // sent when app establishes connection, respond with node ID
+      //  cmd_frame[1..7]  reserved future
       char* app_name = (char *) &cmd_frame[8];
       cmd_frame[len] = 0;  // make app_name null terminated
-      MESH_DEBUG_PRINTLN("App %s connected, ver: %d", app_name, (uint32_t)app_ver);
+      MESH_DEBUG_PRINTLN("App %s connected", app_name);
 
       _iter_started = false;   // stop any left-over ContactsIterator
       int i = 0;
@@ -809,12 +829,14 @@ public:
       }
     } else if (cmd_frame[0] == CMD_SET_TUNING_PARAMS) {
       int i = 1;
-      uint32_t rx;
+      uint32_t rx, af;
       memcpy(&rx, &cmd_frame[i], 4); i += 4;
+      memcpy(&af, &cmd_frame[i], 4); i += 4;
       _prefs.rx_delay_base = ((float)rx) / 1000.0f;
+      _prefs.airtime_factor = ((float)af) / 1000.0f;
       savePrefs();
       writeOKFrame();
-    } else if (cmd_frame[0] == CMD_REBOOT) {
+    } else if (cmd_frame[0] == CMD_REBOOT && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
       board.reboot();
     } else if (cmd_frame[0] == CMD_GET_BATTERY_VOLTAGE) {
       uint8_t reply[3];
