@@ -76,6 +76,10 @@
   #include <helpers/nrf52/RAK4631Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
   static RAK4631Board board;
+#elif defined(T1000_E)
+  #include <helpers/nrf52/T1000eBoard.h>
+  #include <helpers/CustomLR1110Wrapper.h>
+  static T1000eBoard board;
 #else
   #error "need to provide a 'board' object"
 #endif
