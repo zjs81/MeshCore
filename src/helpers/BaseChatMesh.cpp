@@ -286,7 +286,7 @@ bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password,
 
   int tlen;
   uint8_t temp[24];
-  uint32_t now = getRTCClock()->getCurrentTime();
+  uint32_t now = getRTCClock()->getCurrentTimeUnique();
   memcpy(temp, &now, 4);   // mostly an extra blob to help make packet_hash unique
   if (recipient.type == ADV_TYPE_ROOM) {
     memcpy(&temp[4], &recipient.sync_since, 4);

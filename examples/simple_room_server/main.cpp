@@ -200,8 +200,7 @@ class MyMesh : public mesh::Mesh {
     strncpy(posts[next_post_idx].text, postData, MAX_POST_TEXT_LEN);
     posts[next_post_idx].text[MAX_POST_TEXT_LEN] = 0;
 
-    posts[next_post_idx].post_timestamp = getRTCClock()->getCurrentTime();
-    // TODO:  only post at maximum of ONE PER SECOND, so that post_timestamps are UNIQUE!!
+    posts[next_post_idx].post_timestamp = getRTCClock()->getCurrentTimeUnique();
     next_post_idx = (next_post_idx + 1) % MAX_UNSYNCED_POSTS;
 
     next_push = futureMillis(PUSH_NOTIFY_DELAY_MILLIS);
@@ -328,6 +327,7 @@ protected:
       uint32_t now = getRTCClock()->getCurrentTime();
       client->last_activity = now;
 
+      now = getRTCClock()->getCurrentTimeUnique();
       memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
       // TODO: maybe reply with count of messages waiting to be synced for THIS client?
       reply_data[4] = RESP_SERVER_LOGIN_OK;
@@ -393,7 +393,7 @@ protected:
       } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
         client->last_timestamp = sender_timestamp;
 
-        uint32_t now = getRTCClock()->getCurrentTime();
+        uint32_t now = getRTCClock()->getCurrentTimeUnique();
         client->last_activity = now;
         client->push_failures = 0;  // reset so push can resume (if prev failed)
 

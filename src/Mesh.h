@@ -8,6 +8,10 @@ namespace mesh {
  * An abstraction of the device's Realtime Clock.
 */
 class RTCClock {
+  uint32_t last_unique;
+protected:
+  RTCClock() { last_unique = 0; }
+
 public:
   /**
    * \returns  the current time. in UNIX epoch seconds.
@@ -18,6 +22,14 @@ public:
    * \param time  current time in UNIX epoch seconds.
   */
   virtual void setCurrentTime(uint32_t time) = 0;
+
+  uint32_t getCurrentTimeUnique() {
+    uint32_t t = getCurrentTime();
+    if (t <= last_unique) {
+      return ++last_unique;
+    }
+    return last_unique = t;
+  }
 };
 
 class GroupChannel {

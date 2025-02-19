@@ -165,7 +165,7 @@ class MyMesh : public mesh::Mesh {
   }
 
   int handleRequest(ClientInfo* sender, uint8_t* payload, size_t payload_len) { 
-    uint32_t now = getRTCClock()->getCurrentTime();
+    uint32_t now = getRTCClock()->getCurrentTimeUnique();
     memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
 
     switch (payload[0]) {
@@ -333,7 +333,7 @@ protected:
       client->last_timestamp = timestamp;
       client->is_admin = is_admin;
 
-      uint32_t now = getRTCClock()->getCurrentTime();
+      uint32_t now = getRTCClock()->getCurrentTimeUnique();
       memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
       memcpy(&reply_data[4], "OK", 2);
 
@@ -441,7 +441,7 @@ protected:
         handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
         int text_len = strlen((char *) &temp[5]);
         if (text_len > 0) {
-          uint32_t timestamp = getRTCClock()->getCurrentTime();
+          uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
           if (timestamp == sender_timestamp) {
             // WORKAROUND: the two timestamps need to be different, in the CLI view
             timestamp++;
