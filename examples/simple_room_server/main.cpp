@@ -344,6 +344,8 @@ protected:
       reply_data[7] = 0;  // FUTURE: reserved
       memcpy(&reply_data[8], "OK", 2);  // REVISIT: not really needed
 
+      next_push = futureMillis(PUSH_NOTIFY_DELAY_MILLIS);  // delay next push, give RESPONSE packet time to arrive first
+
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
         mesh::Packet* path = createPathReturn(sender, client->secret, packet->path, packet->path_len,
