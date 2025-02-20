@@ -284,6 +284,14 @@ protected:
     return (int) ((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
   }
 
+  const char* getLogDateTime() override { 
+    static char tmp[32];
+    uint32_t now = getRTCClock()->getCurrentTime();
+    DateTime dt = DateTime(now);
+    sprintf(tmp, "%02d:%02d:%02d - %d/%d/%d U", dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year());
+    return tmp;
+  }
+
   uint32_t getRetransmitDelay(const mesh::Packet* packet) override {
     uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.tx_delay_factor);
     return getRNG()->nextInt(0, 6)*t;

@@ -229,14 +229,6 @@ class MyMesh : public mesh::Mesh {
   #endif
   }
 
-  const char* get_curr_time_str() {
-    static char tmp[32];
-    uint32_t now = getRTCClock()->getCurrentTime();
-    DateTime dt = DateTime(now);
-    sprintf(tmp, "%02d:%02d:%02d - %d/%d/%d U", dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year());
-    return tmp;
-  }  
-
 protected:
   float getAirtimeBudgetFactor() const override {
     return _prefs.airtime_factor;
@@ -246,11 +238,19 @@ protected:
     return !_prefs.disable_fwd;
   }
 
+  const char* getLogDateTime() override { 
+    static char tmp[32];
+    uint32_t now = getRTCClock()->getCurrentTime();
+    DateTime dt = DateTime(now);
+    sprintf(tmp, "%02d:%02d:%02d - %d/%d/%d U", dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year());
+    return tmp;
+  }
+
   void logRx(mesh::Packet* pkt, int len, float score) override {
     if (_logging) {
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
-        f.print(get_curr_time_str());
+        f.print(getLogDateTime());
         f.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d",
           len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
           (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
@@ -269,7 +269,7 @@ protected:
     if (_logging) {
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
-        f.print(get_curr_time_str());
+        f.print(getLogDateTime());
         f.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)", 
           len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
 
@@ -287,7 +287,7 @@ protected:
     if (_logging) {
       File f = openAppend(PACKET_LOG_FILE);
       if (f) {
-        f.print(get_curr_time_str());
+        f.print(getLogDateTime());
         f.printf(": TX FAIL!, len=%d (type=%d, route=%s, payload_len=%d)\n", 
           len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
         f.close();

@@ -46,7 +46,8 @@ void Dispatcher::loop() {
       releasePacket(outbound);  // return to pool
       outbound = NULL;
     } else if (millisHasNowPassed(outbound_expiry)) {
-      MESH_DEBUG_PRINTLN("Dispatcher::loop(): WARNING: outbound packed send timed out!");
+      MESH_DEBUG_PRINT(getLogDateTime());
+      MESH_DEBUG_PRINTLN(" Dispatcher::loop(): WARNING: outbound packed send timed out!");
 
       _radio->onSendFinished();
       logTxFail(outbound, 2 + outbound->path_len + outbound->payload_len);
@@ -79,7 +80,8 @@ void Dispatcher::checkRecv() {
     if (len > 0) {
       pkt = _mgr->allocNew();
       if (pkt == NULL) {
-        MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(): WARNING: received data, no unused packets available!");
+        MESH_DEBUG_PRINT(getLogDateTime());
+        MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(): WARNING: received data, no unused packets available!");
       } else {
         int i = 0;
 #ifdef NODE_ID
@@ -95,7 +97,8 @@ void Dispatcher::checkRecv() {
         pkt->path_len = raw[i++];
 
         if (pkt->path_len > MAX_PATH_SIZE || i + pkt->path_len > len) {
-          MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(): partial or corrupt packet received, len=%d", len);
+          MESH_DEBUG_PRINT(getLogDateTime());
+          MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(): partial or corrupt packet received, len=%d", len);
           _mgr->free(pkt);  // put back into pool
           pkt = NULL;
         } else {
@@ -113,10 +116,17 @@ void Dispatcher::checkRecv() {
     }
   }
   if (pkt) {
-    #if MESH_PACKET_LOGGING      
-      Serial.printf("PACKET: recv, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d\n", 
+    #if MESH_PACKET_LOGGING
+    Serial.print(getLogDateTime());
+    Serial.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d", 
             2 + pkt->path_len + pkt->payload_len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
             (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
+    if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH || pkt->getPayloadType() == PAYLOAD_TYPE_REQ
+        || pkt->getPayloadType() == PAYLOAD_TYPE_RESPONSE || pkt->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
+      Serial.printf(" [%02X -> %02X]\n", (uint32_t)pkt->payload[1], (uint32_t)pkt->payload[0]);
+    } else {
+      Serial.printf("\n");
+    }
     #endif
     logRx(pkt, 2 + pkt->path_len + pkt->payload_len, score);   // hook for custom logging
 
@@ -125,10 +135,12 @@ void Dispatcher::checkRecv() {
 
       int _delay = calcRxDelay(score, air_time);
       if (_delay < 50) {
-        MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(), score delay below threshold (%d)", _delay);
+        MESH_DEBUG_PRINT(getLogDateTime());
+        MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(), score delay below threshold (%d)", _delay);
         processRecvPacket(pkt);   // is below the score delay threshold, so process immediately
       } else {
-        MESH_DEBUG_PRINTLN("Dispatcher::checkRecv(), score delay is: %d millis", _delay);
+        MESH_DEBUG_PRINT(getLogDateTime());
+        MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(), score delay is: %d millis", _delay);
         if (_delay > MAX_RX_DELAY_MILLIS) {
           _delay = MAX_RX_DELAY_MILLIS;
         }
@@ -173,7 +185,8 @@ void Dispatcher::checkSend() {
     memcpy(&raw[len], outbound->path, outbound->path_len); len += outbound->path_len;
 
     if (len + outbound->payload_len > MAX_TRANS_UNIT) {
-      MESH_DEBUG_PRINTLN("Dispatcher::checkSend(): FATAL: Invalid packet queued... too long, len=%d", len + outbound->payload_len);
+      MESH_DEBUG_PRINT(getLogDateTime());
+      MESH_DEBUG_PRINTLN(" Dispatcher::checkSend(): FATAL: Invalid packet queued... too long, len=%d", len + outbound->payload_len);
       _mgr->free(outbound);
       outbound = NULL;
     } else {
@@ -185,8 +198,15 @@ void Dispatcher::checkSend() {
       outbound_expiry = futureMillis(max_airtime);
 
     #if MESH_PACKET_LOGGING
-      Serial.printf("PACKET: send, len=%d (type=%d, route=%s, payload_len=%d)\n", 
+      Serial.print(getLogDateTime());
+      Serial.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)", 
             len, outbound->getPayloadType(), outbound->isRouteDirect() ? "D" : "F", outbound->payload_len);
+      if (outbound->getPayloadType() == PAYLOAD_TYPE_PATH || outbound->getPayloadType() == PAYLOAD_TYPE_REQ
+        || outbound->getPayloadType() == PAYLOAD_TYPE_RESPONSE || outbound->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
+        Serial.printf(" [%02X -> %02X]\n", (uint32_t)outbound->payload[1], (uint32_t)outbound->payload[0]);
+      } else {
+        Serial.printf("\n");
+      }
     #endif
     }
   }
@@ -208,7 +228,8 @@ void Dispatcher::releasePacket(Packet* packet) {
 
 void Dispatcher::sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis) {
   if (packet->path_len > MAX_PATH_SIZE || packet->payload_len > MAX_PACKET_PAYLOAD) {
-    MESH_DEBUG_PRINTLN("Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
+    MESH_DEBUG_PRINT(getLogDateTime());
+    MESH_DEBUG_PRINTLN(" Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
     _mgr->free(packet);
   } else {
     _mgr->queueOutbound(packet, priority, futureMillis(delay_millis));
