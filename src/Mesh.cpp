@@ -30,8 +30,7 @@ int Mesh::searchChannelsByHash(const uint8_t* hash, GroupChannel channels[], int
 
 DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
   if (pkt->getPayloadVer() > PAYLOAD_VER_1) {  // not supported in this firmware version
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): unsupported packet version");
+    MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): unsupported packet version", getLogDateTime());
     return ACTION_RELEASE;
   }
 
@@ -55,8 +54,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       uint32_t ack_crc;
       memcpy(&ack_crc, &pkt->payload[i], 4); i += 4;
       if (i > pkt->payload_len) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): incomplete ACK packet");
+        MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete ACK packet", getLogDateTime());
       } else if (!_tables->hasSeen(pkt)) {
         onAckRecv(pkt, ack_crc);
         action = routeRecvPacket(pkt);
@@ -73,8 +71,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
       if (i + 2 >= pkt->payload_len) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): incomplete data packet");
+        MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete data packet", getLogDateTime());
       } else if (!_tables->hasSeen(pkt)) {
         // NOTE: this is a 'first packet wins' impl. When receiving from multiple paths, the first to arrive wins.
         //       For flood mode, the path may not be the 'best' in terms of hops.
@@ -117,8 +114,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
           if (found) {
             pkt->markDoNotRetransmit();  // packet was for this node, so don't retransmit
           } else {
-            MESH_DEBUG_PRINT(getLogDateTime());
-            MESH_DEBUG_PRINTLN(" recv matches no peers, src_hash=%02X", (uint32_t)src_hash);
+            MESH_DEBUG_PRINTLN("%s recv matches no peers, src_hash=%02X", getLogDateTime(), (uint32_t)src_hash);
           }
         }
         action = routeRecvPacket(pkt);
@@ -132,8 +128,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
       if (i + 2 >= pkt->payload_len) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): incomplete data packet");
+        MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete data packet", getLogDateTime());
       } else if (!_tables->hasSeen(pkt)) {
         if (self_id.isHashMatch(&dest_hash)) {
           Identity sender(sender_pub_key);
@@ -160,8 +155,7 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 
       uint8_t* macAndData = &pkt->payload[i];   // MAC + encrypted data 
       if (i + 2 >= pkt->payload_len) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): incomplete data packet");
+        MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete data packet", getLogDateTime());
       } else if (!_tables->hasSeen(pkt)) {
         // scan channels DB, for all matching hashes of 'channel_hash' (max 2 matches supported ATM)
         GroupChannel channels[2];
@@ -190,11 +184,9 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       const uint8_t* signature = &pkt->payload[i]; i += SIGNATURE_SIZE;
 
       if (i > pkt->payload_len) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): incomplete advertisement packet");
+        MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): incomplete advertisement packet", getLogDateTime());
       } else if (self_id.matches(id.pub_key)) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): receiving SELF advert packet");
+        MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): receiving SELF advert packet", getLogDateTime());
       } else if (!_tables->hasSeen(pkt)) {
         uint8_t* app_data = &pkt->payload[i];
         int app_data_len = pkt->payload_len - i;
@@ -212,20 +204,17 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
           is_ok = id.verify(signature, message, msg_len);
         }
         if (is_ok) {
-          MESH_DEBUG_PRINT(getLogDateTime());
-          MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): valid advertisement received!");
+          MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): valid advertisement received!", getLogDateTime());
           onAdvertRecv(pkt, id, timestamp, app_data, app_data_len);
           action = routeRecvPacket(pkt);
         } else {
-          MESH_DEBUG_PRINT(getLogDateTime());
-          MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): received advertisement with forged signature! (app_data_len=%d)", app_data_len);
+          MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): received advertisement with forged signature! (app_data_len=%d)", getLogDateTime(), app_data_len);
         }
       }
       break;
     }
     default:
-      MESH_DEBUG_PRINT(getLogDateTime());
-      MESH_DEBUG_PRINTLN(" Mesh::onRecvPacket(): unknown payload type, header: %d", (int) pkt->header);
+      MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): unknown payload type, header: %d", getLogDateTime(), (int) pkt->header);
       // Don't flood route unknown packet types!   action = routeRecvPacket(pkt);
       break;
   }
@@ -250,8 +239,7 @@ Packet* Mesh::createAdvert(const LocalIdentity& id, const uint8_t* app_data, siz
 
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::createAdvert(): error, packet pool empty");
+    MESH_DEBUG_PRINTLN("%s Mesh::createAdvert(): error, packet pool empty", getLogDateTime());
     return NULL;
   }
 
@@ -295,8 +283,7 @@ Packet* Mesh::createPathReturn(const uint8_t* dest_hash, const uint8_t* secret, 
 
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::createPathReturn(): error, packet pool empty");
+    MESH_DEBUG_PRINTLN("%s Mesh::createPathReturn(): error, packet pool empty", getLogDateTime());
     return NULL;
   }
   packet->header = (PAYLOAD_TYPE_PATH << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
@@ -337,8 +324,7 @@ Packet* Mesh::createDatagram(uint8_t type, const Identity& dest, const uint8_t* 
 
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::createDatagram(): error, packet pool empty");
+    MESH_DEBUG_PRINTLN("%s Mesh::createDatagram(): error, packet pool empty", getLogDateTime());
     return NULL;
   }
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
@@ -362,8 +348,7 @@ Packet* Mesh::createAnonDatagram(uint8_t type, const LocalIdentity& sender, cons
 
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::createAnonDatagram(): error, packet pool empty");
+    MESH_DEBUG_PRINTLN("%s Mesh::createAnonDatagram(): error, packet pool empty", getLogDateTime());
     return NULL;
   }
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
@@ -388,8 +373,7 @@ Packet* Mesh::createGroupDatagram(uint8_t type, const GroupChannel& channel, con
 
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::createGroupDatagram(): error, packet pool empty");
+    MESH_DEBUG_PRINTLN("%s Mesh::createGroupDatagram(): error, packet pool empty", getLogDateTime());
     return NULL;
   }
   packet->header = (type << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
@@ -406,8 +390,7 @@ Packet* Mesh::createGroupDatagram(uint8_t type, const GroupChannel& channel, con
 Packet* Mesh::createAck(uint32_t ack_crc) {
   Packet* packet = obtainNewPacket();
   if (packet == NULL) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Mesh::createAck(): error, packet pool empty");
+    MESH_DEBUG_PRINTLN("%s Mesh::createAck(): error, packet pool empty", getLogDateTime());
     return NULL;
   }
   packet->header = (PAYLOAD_TYPE_ACK << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later

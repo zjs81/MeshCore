@@ -46,8 +46,7 @@ void Dispatcher::loop() {
       releasePacket(outbound);  // return to pool
       outbound = NULL;
     } else if (millisHasNowPassed(outbound_expiry)) {
-      MESH_DEBUG_PRINT(getLogDateTime());
-      MESH_DEBUG_PRINTLN(" Dispatcher::loop(): WARNING: outbound packed send timed out!");
+      MESH_DEBUG_PRINTLN("%s Dispatcher::loop(): WARNING: outbound packed send timed out!", getLogDateTime());
 
       _radio->onSendFinished();
       logTxFail(outbound, 2 + outbound->path_len + outbound->payload_len);
@@ -80,8 +79,7 @@ void Dispatcher::checkRecv() {
     if (len > 0) {
       pkt = _mgr->allocNew();
       if (pkt == NULL) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(): WARNING: received data, no unused packets available!");
+        MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(): WARNING: received data, no unused packets available!", getLogDateTime());
       } else {
         int i = 0;
 #ifdef NODE_ID
@@ -97,8 +95,7 @@ void Dispatcher::checkRecv() {
         pkt->path_len = raw[i++];
 
         if (pkt->path_len > MAX_PATH_SIZE || i + pkt->path_len > len) {
-          MESH_DEBUG_PRINT(getLogDateTime());
-          MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(): partial or corrupt packet received, len=%d", len);
+          MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(): partial or corrupt packet received, len=%d", getLogDateTime(), len);
           _mgr->free(pkt);  // put back into pool
           pkt = NULL;
         } else {
@@ -135,12 +132,10 @@ void Dispatcher::checkRecv() {
 
       int _delay = calcRxDelay(score, air_time);
       if (_delay < 50) {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(), score delay below threshold (%d)", _delay);
+        MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(), score delay below threshold (%d)", getLogDateTime(), _delay);
         processRecvPacket(pkt);   // is below the score delay threshold, so process immediately
       } else {
-        MESH_DEBUG_PRINT(getLogDateTime());
-        MESH_DEBUG_PRINTLN(" Dispatcher::checkRecv(), score delay is: %d millis", _delay);
+        MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(), score delay is: %d millis", getLogDateTime(), _delay);
         if (_delay > MAX_RX_DELAY_MILLIS) {
           _delay = MAX_RX_DELAY_MILLIS;
         }
@@ -185,8 +180,7 @@ void Dispatcher::checkSend() {
     memcpy(&raw[len], outbound->path, outbound->path_len); len += outbound->path_len;
 
     if (len + outbound->payload_len > MAX_TRANS_UNIT) {
-      MESH_DEBUG_PRINT(getLogDateTime());
-      MESH_DEBUG_PRINTLN(" Dispatcher::checkSend(): FATAL: Invalid packet queued... too long, len=%d", len + outbound->payload_len);
+      MESH_DEBUG_PRINTLN("%s Dispatcher::checkSend(): FATAL: Invalid packet queued... too long, len=%d", getLogDateTime(), len + outbound->payload_len);
       _mgr->free(outbound);
       outbound = NULL;
     } else {
@@ -228,8 +222,7 @@ void Dispatcher::releasePacket(Packet* packet) {
 
 void Dispatcher::sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis) {
   if (packet->path_len > MAX_PATH_SIZE || packet->payload_len > MAX_PACKET_PAYLOAD) {
-    MESH_DEBUG_PRINT(getLogDateTime());
-    MESH_DEBUG_PRINTLN(" Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
+    MESH_DEBUG_PRINTLN("%s Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", getLogDateTime(), (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
     _mgr->free(packet);
   } else {
     _mgr->queueOutbound(packet, priority, futureMillis(delay_millis));
