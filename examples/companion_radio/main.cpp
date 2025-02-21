@@ -46,6 +46,14 @@
   #define OFFLINE_QUEUE_SIZE  16
 #endif
 
+#ifndef ENABLE_PRIVATE_KEY_EXPORT
+  #define ENABLE_PRIVATE_KEY_EXPORT 0
+#endif
+
+#ifndef ENABLE_PRIVATE_KEY_IMPORT
+  #define ENABLE_PRIVATE_KEY_IMPORT 0
+#endif
+
 #include <helpers/BaseChatMesh.h>
 
 #define SEND_TIMEOUT_BASE_MILLIS          500
@@ -121,6 +129,8 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_GET_BATTERY_VOLTAGE   20
 #define CMD_SET_TUNING_PARAMS     21
 #define CMD_DEVICE_QEURY          22
+#define CMD_EXPORT_PRIVATE_KEY    23
+#define CMD_IMPORT_PRIVATE_KEY    24
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -136,6 +146,8 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_EXPORT_CONTACT   11
 #define RESP_CODE_BATTERY_VOLTAGE  12   // a reply to a CMD_GET_BATTERY_VOLTAGE
 #define RESP_CODE_DEVICE_INFO      13   // a reply to CMD_DEVICE_QEURY
+#define RESP_CODE_PRIVATE_KEY      14   // a reply to CMD_EXPORT_PRIVATE_KEY
+#define RESP_CODE_DISABLED         15
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -163,6 +175,7 @@ struct NodePrefs {  // persisted to file
 class MyMesh : public BaseChatMesh {
   FILESYSTEM* _fs;
   RADIO_CLASS* _phy;
+  IdentityStore* _identity_store;
   NodePrefs _prefs;
   uint32_t expected_ack_crc;  // TODO: keep table of expected ACKs
   mesh::GroupChannel* _public;
@@ -182,6 +195,26 @@ class MyMesh : public BaseChatMesh {
   };
   int offline_queue_len;
   Frame offline_queue[OFFLINE_QUEUE_SIZE];
+
+  void initIdentityStore(FILESYSTEM& fs) {
+  #if defined(NRF52_PLATFORM)
+    _identity_store = new IdentityStore(fs, "");
+  #else
+    _identity_store = new IdentityStore(fs, "/identity");
+  #endif
+  }
+
+  void loadMainIdentity(mesh::RNG& trng) {
+    if(!_identity_store->load("_main", self_id)){
+      self_id = mesh::LocalIdentity(&trng);  // create new random identity
+      saveMainIdentity(self_id);
+    }
+  }
+
+  bool saveMainIdentity(mesh::LocalIdentity identity) {
+    self_id = identity;
+    return _identity_store->save("_main", identity);
+  }
 
   void loadContacts() {
     if (_fs->exists("/contacts3")) {
@@ -299,6 +332,12 @@ class MyMesh : public BaseChatMesh {
   void writeErrFrame() {
     uint8_t buf[1];
     buf[0] = RESP_CODE_ERR;
+    _serial->writeFrame(buf, 1);
+  }
+
+  void writeDisabledFrame() {
+    uint8_t buf[1];
+    buf[0] = RESP_CODE_DISABLED;
     _serial->writeFrame(buf, 1);
   }
 
@@ -495,15 +534,8 @@ public:
 
     BaseChatMesh::begin();
 
-  #if defined(NRF52_PLATFORM)
-    IdentityStore store(fs, "");
-  #else
-    IdentityStore store(fs, "/identity");
-  #endif
-    if (!store.load("_main", self_id)) {
-      self_id = mesh::LocalIdentity(&trng);  // create new random identity
-      store.save("_main", self_id);
-    }
+    initIdentityStore(fs);
+    loadMainIdentity(trng);
 
     // load persisted prefs
     if (_fs->exists("/node_prefs")) {
@@ -844,6 +876,29 @@ public:
       uint16_t battery_millivolts = board.getBattMilliVolts();
       memcpy(&reply[1], &battery_millivolts, 2);
       _serial->writeFrame(reply, 3);
+    } else if (cmd_frame[0] == CMD_EXPORT_PRIVATE_KEY) {
+      if(ENABLE_PRIVATE_KEY_EXPORT == 1){
+        uint8_t reply[65];
+        reply[0] = RESP_CODE_PRIVATE_KEY;
+        uint8_t private_key[64];
+        self_id.writeTo(private_key, 64);
+        memcpy(&reply[1], &private_key, 64);
+        _serial->writeFrame(reply, 65);
+      } else {
+        writeDisabledFrame();
+      }
+    } else if (cmd_frame[0] == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
+      if(ENABLE_PRIVATE_KEY_IMPORT == 1){
+        mesh::LocalIdentity identity = mesh::LocalIdentity();
+        identity.readFrom(&cmd_frame[1], 64);
+        if(saveMainIdentity(identity)){
+          writeOKFrame();
+        } else {
+          writeErrFrame();
+        }
+      } else {
+        writeDisabledFrame();
+      }
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
