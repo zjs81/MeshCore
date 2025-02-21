@@ -482,6 +482,7 @@ protected:
         uint32_t now = getRTCClock()->getCurrentTime();
         client->last_activity = now;   // <-- THIS will keep client connection alive
         client->push_failures = 0;  // reset so push can resume (if prev failed)
+        client->pending_ack = 0;
 
         // TODO: Throttle KEEP_ALIVE requests!
         // if client sends too quickly, evict()
