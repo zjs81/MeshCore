@@ -46,14 +46,6 @@
   #define OFFLINE_QUEUE_SIZE  16
 #endif
 
-#ifndef ENABLE_PRIVATE_KEY_EXPORT
-  #define ENABLE_PRIVATE_KEY_EXPORT 0
-#endif
-
-#ifndef ENABLE_PRIVATE_KEY_IMPORT
-  #define ENABLE_PRIVATE_KEY_IMPORT 0
-#endif
-
 #include <helpers/BaseChatMesh.h>
 
 #define SEND_TIMEOUT_BASE_MILLIS          500
@@ -196,23 +188,14 @@ class MyMesh : public BaseChatMesh {
   int offline_queue_len;
   Frame offline_queue[OFFLINE_QUEUE_SIZE];
 
-  void initIdentityStore(FILESYSTEM& fs) {
-  #if defined(NRF52_PLATFORM)
-    _identity_store = new IdentityStore(fs, "");
-  #else
-    _identity_store = new IdentityStore(fs, "/identity");
-  #endif
-  }
-
   void loadMainIdentity(mesh::RNG& trng) {
-    if(!_identity_store->load("_main", self_id)){
+    if (!_identity_store->load("_main", self_id)) {
       self_id = mesh::LocalIdentity(&trng);  // create new random identity
       saveMainIdentity(self_id);
     }
   }
 
-  bool saveMainIdentity(mesh::LocalIdentity identity) {
-    self_id = identity;
+  bool saveMainIdentity(const mesh::LocalIdentity& identity) {
     return _identity_store->save("_main", identity);
   }
 
@@ -516,6 +499,7 @@ public:
     _iter_started = false;
     offline_queue_len = 0;
     app_target_ver = 0;
+    _identity_store = NULL;
 
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
@@ -534,7 +518,12 @@ public:
 
     BaseChatMesh::begin();
 
-    initIdentityStore(fs);
+  #if defined(NRF52_PLATFORM)
+    _identity_store = new IdentityStore(fs, "");
+  #else
+    _identity_store = new IdentityStore(fs, "/identity");
+  #endif
+
     loadMainIdentity(trng);
 
     // load persisted prefs
@@ -877,28 +866,27 @@ public:
       memcpy(&reply[1], &battery_millivolts, 2);
       _serial->writeFrame(reply, 3);
     } else if (cmd_frame[0] == CMD_EXPORT_PRIVATE_KEY) {
-      if(ENABLE_PRIVATE_KEY_EXPORT == 1){
+      #if ENABLE_PRIVATE_KEY_EXPORT
         uint8_t reply[65];
         reply[0] = RESP_CODE_PRIVATE_KEY;
-        uint8_t private_key[64];
-        self_id.writeTo(private_key, 64);
-        memcpy(&reply[1], &private_key, 64);
+        self_id.writeTo(&reply[1], 64);
         _serial->writeFrame(reply, 65);
-      } else {
+      #else
         writeDisabledFrame();
-      }
+      #endif
     } else if (cmd_frame[0] == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
-      if(ENABLE_PRIVATE_KEY_IMPORT == 1){
-        mesh::LocalIdentity identity = mesh::LocalIdentity();
+      #if ENABLE_PRIVATE_KEY_IMPORT
+        mesh::LocalIdentity identity;
         identity.readFrom(&cmd_frame[1], 64);
-        if(saveMainIdentity(identity)){
+        if (saveMainIdentity(identity)) {
+          self_id = identity;
           writeOKFrame();
         } else {
           writeErrFrame();
         }
-      } else {
+      #else
         writeDisabledFrame();
-      }
+      #endif
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
