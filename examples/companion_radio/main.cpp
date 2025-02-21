@@ -46,6 +46,14 @@
   #define OFFLINE_QUEUE_SIZE  16
 #endif
 
+#ifndef ENABLE_PRIVATE_KEY_EXPORT
+  #define ENABLE_PRIVATE_KEY_EXPORT 0
+#endif
+
+#ifndef ENABLE_PRIVATE_KEY_IMPORT
+  #define ENABLE_PRIVATE_KEY_IMPORT 0
+#endif
+
 #include <helpers/BaseChatMesh.h>
 
 #define SEND_TIMEOUT_BASE_MILLIS          500
@@ -139,6 +147,7 @@ static uint32_t _atoi(const char* sp) {
 #define RESP_CODE_BATTERY_VOLTAGE  12   // a reply to a CMD_GET_BATTERY_VOLTAGE
 #define RESP_CODE_DEVICE_INFO      13   // a reply to CMD_DEVICE_QEURY
 #define RESP_CODE_PRIVATE_KEY      14   // a reply to CMD_EXPORT_PRIVATE_KEY
+#define RESP_CODE_DISABLED         15
 
 // these are _pushed_ to client app at any time
 #define PUSH_CODE_ADVERT            0x80
@@ -323,6 +332,12 @@ class MyMesh : public BaseChatMesh {
   void writeErrFrame() {
     uint8_t buf[1];
     buf[0] = RESP_CODE_ERR;
+    _serial->writeFrame(buf, 1);
+  }
+
+  void writeDisabledFrame() {
+    uint8_t buf[1];
+    buf[0] = RESP_CODE_DISABLED;
     _serial->writeFrame(buf, 1);
   }
 
@@ -862,19 +877,27 @@ public:
       memcpy(&reply[1], &battery_millivolts, 2);
       _serial->writeFrame(reply, 3);
     } else if (cmd_frame[0] == CMD_EXPORT_PRIVATE_KEY) {
-      uint8_t reply[65];
-      reply[0] = RESP_CODE_PRIVATE_KEY;
-      uint8_t private_key[64];
-      self_id.writeTo(private_key, 64);
-      memcpy(&reply[1], &private_key, 64);
-      _serial->writeFrame(reply, 65);
-    } else if (cmd_frame[0] == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
-      mesh::LocalIdentity identity = mesh::LocalIdentity();
-      identity.readFrom(&cmd_frame[1], 64);
-      if(saveMainIdentity(identity)){
-        writeOKFrame();
+      if(ENABLE_PRIVATE_KEY_EXPORT == 1){
+        uint8_t reply[65];
+        reply[0] = RESP_CODE_PRIVATE_KEY;
+        uint8_t private_key[64];
+        self_id.writeTo(private_key, 64);
+        memcpy(&reply[1], &private_key, 64);
+        _serial->writeFrame(reply, 65);
       } else {
-        writeErrFrame();
+        writeDisabledFrame();
+      }
+    } else if (cmd_frame[0] == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
+      if(ENABLE_PRIVATE_KEY_IMPORT == 1){
+        mesh::LocalIdentity identity = mesh::LocalIdentity();
+        identity.readFrom(&cmd_frame[1], 64);
+        if(saveMainIdentity(identity)){
+          writeOKFrame();
+        } else {
+          writeErrFrame();
+        }
+      } else {
+        writeDisabledFrame();
       }
     } else {
       writeErrFrame();
