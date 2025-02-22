@@ -197,8 +197,7 @@ class MyMesh : public mesh::Mesh {
   void addPost(ClientInfo* client, const char* postData) {
     // TODO: suggested postData format: <title>/<descrption>
     posts[next_post_idx].author = client->id;    // add to cyclic queue
-    strncpy(posts[next_post_idx].text, postData, MAX_POST_TEXT_LEN);
-    posts[next_post_idx].text[MAX_POST_TEXT_LEN] = 0;
+    StrHelper::strncpy(posts[next_post_idx].text, postData, MAX_POST_TEXT_LEN);
 
     posts[next_post_idx].post_timestamp = getRTCClock()->getCurrentTimeUnique();
     next_post_idx = (next_post_idx + 1) % MAX_UNSYNCED_POSTS;
@@ -540,19 +539,16 @@ public:
     _prefs.airtime_factor = 1.0;    // one half
     _prefs.rx_delay_base = 0.0f;   // off by default, was 10.0
     _prefs.tx_delay_factor = 0.5f;   // was 0.25f;
-    strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
-    _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
+    StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
     _prefs.node_lat = ADVERT_LAT;
     _prefs.node_lon = ADVERT_LON;
-    strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password)-1);
-    _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
+    StrHelper::strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password));
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
     _prefs.disable_fwd = 1;
     _prefs.advert_interval = 2;  // default to 2 minutes for NEW installs
   #ifdef ROOM_PASSWORD
-    strncpy(_prefs.guest_password, ROOM_PASSWORD, sizeof(_prefs.guest_password)-1);
-    _prefs.guest_password[sizeof(_prefs.guest_password)-1] = 0;  // truncate if necessary
+    StrHelper::strncpy(_prefs.guest_password, ROOM_PASSWORD, sizeof(_prefs.guest_password));
   #endif
 
     num_clients = 0;
@@ -639,8 +635,7 @@ public:
       }
     } else if (memcmp(command, "password ", 9) == 0) {
       // change admin password
-      strncpy(_prefs.password, &command[9], sizeof(_prefs.password)-1);
-      _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necesary
+      StrHelper::strncpy(_prefs.password, &command[9], sizeof(_prefs.password));
       savePrefs();
       sprintf(reply, "password now: %s", _prefs.password);   // echo back just to let admin know for sure!!
     } else if (memcmp(command, "set ", 4) == 0) {
@@ -662,13 +657,11 @@ public:
           strcpy(reply, "OK");
         }
       } else if (memcmp(config, "guest.password ", 15) == 0) {
-        strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password)-1);
-        _prefs.guest_password[sizeof(_prefs.guest_password)-1] = 0;  // truncate if necessary
+        StrHelper::strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password));
         savePrefs();
         strcpy(reply, "OK");
       } else if (memcmp(config, "name ", 5) == 0) {
-        strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
-        _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
+        StrHelper::strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name));
         savePrefs();
         strcpy(reply, "OK");
       } else if (memcmp(config, "repeat ", 7) == 0) {

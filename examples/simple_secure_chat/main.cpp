@@ -466,8 +466,7 @@ public:
         savePrefs();
         Serial.println("  OK");
       } else if (memcmp(config, "name ", 5) == 0) {
-        strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
-        _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
+        StrHelper::strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name));
         savePrefs();
         Serial.println("  OK");
       } else if (memcmp(config, "lat ", 4) == 0) {

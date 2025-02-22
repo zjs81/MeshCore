@@ -497,11 +497,11 @@ public:
     _prefs.airtime_factor = 1.0;    // one half
     _prefs.rx_delay_base =   0.0f;  // turn off by default, was 10.0;
     _prefs.tx_delay_factor = 0.5f;   // was 0.25f
-    strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name)-1);
+    StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
     _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
     _prefs.node_lat = ADVERT_LAT;
     _prefs.node_lon = ADVERT_LON;
-    strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password)-1);
+    StrHelper::strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password));
     _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
@@ -598,8 +598,7 @@ public:
       }
     } else if (memcmp(command, "password ", 9) == 0) {
       // change admin password
-      strncpy(_prefs.password, &command[9], sizeof(_prefs.password)-1);
-      _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necesary
+      StrHelper::strncpy(_prefs.password, &command[9], sizeof(_prefs.password));
       checkAdvertInterval();
       savePrefs();
       sprintf(reply, "password now: %s", _prefs.password);   // echo back just to let admin know for sure!!
@@ -622,13 +621,11 @@ public:
           strcpy(reply, "OK");
         }
       } else if (memcmp(config, "guest.password ", 15) == 0) {
-        strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password)-1);
-        _prefs.guest_password[sizeof(_prefs.guest_password)-1] = 0;  // truncate if necessary
+        StrHelper::strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password));
         savePrefs();
         strcpy(reply, "OK");
       } else if (memcmp(config, "name ", 5) == 0) {
-        strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name)-1);
-        _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if nec
+        StrHelper::strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name));
         checkAdvertInterval();
         savePrefs();
         strcpy(reply, "OK");

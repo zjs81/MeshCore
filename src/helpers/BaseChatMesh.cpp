@@ -55,8 +55,7 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   putBlobByKey(id.pub_key, PUB_KEY_SIZE, temp_buf, plen);
   
   // update
-  strncpy(from->name, parser.getName(), sizeof(from->name)-1);
-  from->name[sizeof(from->name)-1] = 0;
+  StrHelper::strncpy(from->name, parser.getName(), sizeof(from->name));
   from->type = parser.getType();
   if (parser.hasLatLon()) {
     from->gps_lat = parser.getIntLat();
