@@ -332,7 +332,7 @@ class MyMesh : public BaseChatMesh {
     out_frame[i++] = contact.flags;
     out_frame[i++] = contact.out_path_len;
     memcpy(&out_frame[i], contact.out_path, MAX_PATH_SIZE); i += MAX_PATH_SIZE;
-    memcpy(&out_frame[i], contact.name, 32); i += 32;
+    StrHelper::strzcpy((char *) &out_frame[i], contact.name, 32); i += 32;
     memcpy(&out_frame[i], &contact.last_advert_timestamp, 4); i += 4;
     memcpy(&out_frame[i], &contact.gps_lat, 4); i += 4;
     memcpy(&out_frame[i], &contact.gps_lon, 4); i += 4;

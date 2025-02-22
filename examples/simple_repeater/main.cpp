@@ -498,11 +498,9 @@ public:
     _prefs.rx_delay_base =   0.0f;  // turn off by default, was 10.0;
     _prefs.tx_delay_factor = 0.5f;   // was 0.25f
     StrHelper::strncpy(_prefs.node_name, ADVERT_NAME, sizeof(_prefs.node_name));
-    _prefs.node_name[sizeof(_prefs.node_name)-1] = 0;  // truncate if necessary
     _prefs.node_lat = ADVERT_LAT;
     _prefs.node_lon = ADVERT_LON;
     StrHelper::strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password));
-    _prefs.password[sizeof(_prefs.password)-1] = 0;  // truncate if necessary
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
     _prefs.advert_interval = 1;  // default to 2 minutes for NEW installs
