@@ -26,7 +26,7 @@ namespace mesh {
 #define PAYLOAD_TYPE_ANON_REQ    0x07    // generic request (prefixed with dest_hash, ephemeral pub_key, MAC) (enc data: ...)
 #define PAYLOAD_TYPE_PATH        0x08    // returned path (prefixed with dest/src hashes, MAC) (enc data: path, extra)
 //...
-#define PAYLOAD_TYPE_RESERVEDM   0x0F    // FUTURE
+#define PAYLOAD_TYPE_RAW_CUSTOM   0x0F    // custom packet as raw bytes, for applications with custom encryption, payloads, etc
 
 #define PAYLOAD_VER_1       0x00   // 1-byte src/dest hashes, 2-byte MAC
 #define PAYLOAD_VER_2       0x01   // FUTURE (eg. 2-byte hashes, 4-byte MAC ??)

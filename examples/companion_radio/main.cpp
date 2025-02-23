@@ -123,6 +123,7 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_DEVICE_QEURY          22
 #define CMD_EXPORT_PRIVATE_KEY    23
 #define CMD_IMPORT_PRIVATE_KEY    24
+#define CMD_SEND_RAW_DATA         25
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -146,6 +147,7 @@ static uint32_t _atoi(const char* sp) {
 #define PUSH_CODE_PATH_UPDATED      0x81
 #define PUSH_CODE_SEND_CONFIRMED    0x82
 #define PUSH_CODE_MSG_WAITING       0x83
+#define PUSH_CODE_RAW_DATA          0x84
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -478,6 +480,21 @@ protected:
   void onContactResponse(const ContactInfo& contact, const uint8_t* data, uint8_t len) override {
     // TODO: check for login response
     // TODO: check for Get Stats response
+  }
+
+  void onRawDataRecv(mesh::Packet* packet) override {
+    int i = 0;
+    out_frame[i++] = PUSH_CODE_RAW_DATA;
+    out_frame[i++] = (int8_t)(_radio->getLastSNR() * 4);
+    out_frame[i++] = (int8_t)(_radio->getLastRSSI());
+    out_frame[i++] = 0xFF;   // reserved (possibly path_len in future)
+    memcpy(&out_frame[i], packet->payload, packet->payload_len); i += packet->payload_len;
+
+    if (_serial->isConnected()) {
+      _serial->writeFrame(out_frame, i);
+    } else {
+      MESH_DEBUG_PRINTLN("onRawDataRecv(), data received while app offline");
+    }
   }
 
   uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override {
@@ -887,6 +904,21 @@ public:
       #else
         writeDisabledFrame();
       #endif
+    } else if (cmd_frame[0] == CMD_SEND_RAW_DATA && len >= 6) {
+      int i = 1;
+      int8_t path_len = cmd_frame[i++];
+      if (path_len >= 0 && i + path_len + 4 <= len) {  // minimum 4 byte payload
+        uint8_t* path = &cmd_frame[i]; i += path_len;
+        auto pkt = createRawData(&cmd_frame[i], len - i);
+        if (pkt) {
+          sendDirect(pkt, path, path_len);
+          writeOKFrame();
+        } else {
+          writeErrFrame();
+        }
+      } else {
+        writeErrFrame();  // flood, not supported (yet)
+      }
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);

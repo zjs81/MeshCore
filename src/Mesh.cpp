@@ -213,6 +213,13 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       }
       break;
     }
+    case PAYLOAD_TYPE_RAW_CUSTOM: {
+      if (pkt->isRouteDirect() && !_tables->hasSeen(pkt)) {
+        onRawDataRecv(pkt);
+        //action = routeRecvPacket(pkt);    don't flood route these (yet)
+      }
+      break;
+    }
     default:
       MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): unknown payload type, header: %d", getLogDateTime(), (int) pkt->header);
       // Don't flood route unknown packet types!   action = routeRecvPacket(pkt);
@@ -397,6 +404,22 @@ Packet* Mesh::createAck(uint32_t ack_crc) {
 
   memcpy(packet->payload, &ack_crc, 4);
   packet->payload_len = 4;
+
+  return packet;
+}
+
+Packet* Mesh::createRawData(const uint8_t* data, size_t len) {
+  if (len > sizeof(Packet::payload)) return NULL;  // invalid arg
+
+  Packet* packet = obtainNewPacket();
+  if (packet == NULL) {
+    MESH_DEBUG_PRINTLN("%s Mesh::createRawData(): error, packet pool empty", getLogDateTime());
+    return NULL;
+  }
+  packet->header = (PAYLOAD_TYPE_RAW_CUSTOM << PH_TYPE_SHIFT);  // ROUTE_TYPE_* set later
+
+  memcpy(packet->payload, data, len);
+  packet->payload_len = len;
 
   return packet;
 }
