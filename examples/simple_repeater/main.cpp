@@ -138,6 +138,7 @@ struct NodePrefs {  // persisted to file
   float rx_delay_base;
   float tx_delay_factor;
   char guest_password[16];
+  float direct_tx_delay_factor;
 };
 
 class MyMesh : public mesh::Mesh {
@@ -309,6 +310,10 @@ protected:
     uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.tx_delay_factor);
     return getRNG()->nextInt(0, 6)*t;
   }
+  uint32_t getDirectRetransmitDelay(const mesh::Packet* packet) override {
+    uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.direct_tx_delay_factor);
+    return getRNG()->nextInt(0, 6)*t;
+  }
 
   void onAnonDataRecv(mesh::Packet* packet, uint8_t type, const mesh::Identity& sender, uint8_t* data, size_t len) override {
     if (type == PAYLOAD_TYPE_ANON_REQ) {  // received an initial request by a possible admin client (unknown at this stage)
@@ -316,13 +321,13 @@ protected:
       memcpy(&timestamp, data, 4);
 
       bool is_admin;
-      if (memcmp(&data[4], _prefs.password, strlen(_prefs.password)) == 0) {  // check for valid password
+      data[len] = 0;  // ensure null terminator
+      if (strcmp((char *) &data[4], _prefs.password) == 0) {  // check for valid password
         is_admin = true;
-      } else if (memcmp(&data[4], _prefs.guest_password, strlen(_prefs.guest_password)) == 0) {  // check guest password
+      } else if (strcmp((char *) &data[4], _prefs.guest_password) == 0) {  // check guest password
         is_admin = false;
       } else {
     #if MESH_DEBUG
-        data[len] = 0;  // ensure null terminator
         MESH_DEBUG_PRINTLN("Invalid password: %s", &data[4]);
     #endif
         return;
@@ -670,6 +675,15 @@ public:
         float f = atof(&config[8]);
         if (f >= 0) {
           _prefs.tx_delay_factor = f;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error, cannot be negative");
+        }
+      } else if (memcmp(config, "direct.txdelay ", 15) == 0) {
+        float f = atof(&config[15]);
+        if (f >= 0) {
+          _prefs.direct_tx_delay_factor = f;
           savePrefs();
           strcpy(reply, "OK");
         } else {
