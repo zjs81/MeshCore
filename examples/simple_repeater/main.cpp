@@ -92,7 +92,9 @@ static uint32_t _atoi(const char* sp) {
   return n;
 }
 
-#define CMD_GET_STATS      0x01
+#define CMD_GET_STATUS      0x01
+
+#define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
 
 struct RepeaterStats {
   uint16_t batt_milli_volts;
@@ -105,13 +107,13 @@ struct RepeaterStats {
   uint32_t total_up_time_secs;
   uint32_t n_sent_flood, n_sent_direct;
   uint32_t n_recv_flood, n_recv_direct;
-  uint32_t n_full_events;
+  uint16_t n_full_events, reserved1;
   uint16_t n_direct_dups, n_flood_dups;
 };
 
 struct ClientInfo {
   mesh::Identity id;
-  uint32_t last_timestamp;
+  uint32_t last_timestamp, last_activity;
   uint8_t secret[PUB_KEY_SIZE];
   bool    is_admin;
   int8_t  out_path_len;
@@ -146,22 +148,24 @@ class MyMesh : public mesh::Mesh {
   bool _logging;
   NodePrefs _prefs;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
-  int num_clients;
   ClientInfo known_clients[MAX_CLIENTS];
 
   ClientInfo* putClient(const mesh::Identity& id) {
-    for (int i = 0; i < num_clients; i++) {
+    uint32_t min_time = 0xFFFFFFFF;
+    ClientInfo* oldest = &known_clients[0];
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+      if (known_clients[i].last_activity < min_time) {
+        oldest = &known_clients[i];
+        min_time = oldest->last_activity;
+      }
       if (id.matches(known_clients[i].id)) return &known_clients[i];  // already known
     }
-    if (num_clients < MAX_CLIENTS) {
-      auto newClient = &known_clients[num_clients++];
-      newClient->id = id;
-      newClient->out_path_len = -1;  // initially out_path is unknown
-      newClient->last_timestamp = 0;
-      self_id.calcSharedSecret(newClient->secret, id);   // calc ECDH shared secret
-      return newClient;
-    }
-    return NULL;  // table is full
+
+    oldest->id = id;
+    oldest->out_path_len = -1;  // initially out_path is unknown
+    oldest->last_timestamp = 0;
+    self_id.calcSharedSecret(oldest->secret, id);   // calc ECDH shared secret
+    return oldest;
   }
 
   int handleRequest(ClientInfo* sender, uint8_t* payload, size_t payload_len) { 
@@ -169,7 +173,7 @@ class MyMesh : public mesh::Mesh {
     memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
 
     switch (payload[0]) {
-      case CMD_GET_STATS: {   // guests can also access this now
+      case CMD_GET_STATUS: {   // guests can also access this now
         RepeaterStats stats;
         stats.batt_milli_volts = board.getBattMilliVolts();
         stats.curr_tx_queue_len = _mgr->getOutboundCount();
@@ -184,6 +188,7 @@ class MyMesh : public mesh::Mesh {
         stats.n_recv_flood = getNumRecvFlood();
         stats.n_recv_direct = getNumRecvDirect();
         stats.n_full_events = getNumFullEvents();
+        stats.reserved1 = 0;
         stats.n_direct_dups = ((SimpleMeshTables *)getTables())->getNumDirectDups();
         stats.n_flood_dups = ((SimpleMeshTables *)getTables())->getNumFloodDups();
 
@@ -324,26 +329,35 @@ protected:
       }
 
       auto client = putClient(sender);  // add to known clients (if not already known)
-      if (client == NULL || timestamp <= client->last_timestamp) {
-        MESH_DEBUG_PRINTLN("Client table full, or replay attack!");
+      if (timestamp <= client->last_timestamp) {
+        MESH_DEBUG_PRINTLN("Possible login replay attack!");
         return;  // FATAL: client table is full -OR- replay attack 
       }
 
       MESH_DEBUG_PRINTLN("Login success!");
       client->last_timestamp = timestamp;
+      client->last_activity = getRTCClock()->getCurrentTime();
       client->is_admin = is_admin;
 
       uint32_t now = getRTCClock()->getCurrentTimeUnique();
       memcpy(reply_data, &now, 4);   // response packets always prefixed with timestamp
-      memcpy(&reply_data[4], "OK", 2);
+    #if 0
+      memcpy(&reply_data[4], "OK", 2);   // legacy response
+    #else
+      reply_data[4] = RESP_SERVER_LOGIN_OK;
+      reply_data[5] = 0;  // NEW: recommended keep-alive interval (secs / 16)
+      reply_data[6] = is_admin ? 1 : 0;
+      reply_data[7] = 0;  // FUTURE: reserved
+      getRNG()->random(&reply_data[8], 4);   // random blob to help packet-hash uniqueness
+  #endif
 
       if (packet->isRouteFlood()) {
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
         mesh::Packet* path = createPathReturn(sender, client->secret, packet->path, packet->path_len,
-                                              PAYLOAD_TYPE_RESPONSE, reply_data, 4 + 2);
+                                              PAYLOAD_TYPE_RESPONSE, reply_data, 12);
         if (path) sendFlood(path);
       } else {
-        mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, client->secret, reply_data, 4 + 2);
+        mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, client->secret, reply_data, 12);
         if (reply) {
           if (client->out_path_len >= 0) {  // we have an out_path, so send DIRECT
             sendDirect(reply, client->out_path, client->out_path_len);
@@ -359,7 +373,7 @@ protected:
 
   int searchPeersByHash(const uint8_t* hash) override {
     int n = 0;
-    for (int i = 0; i < num_clients; i++) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
       if (known_clients[i].id.isHashMatch(hash)) {
         matching_peer_indexes[n++] = i;  // store the INDEXES of matching contacts (for subsequent 'peer' methods)
       }
@@ -369,7 +383,7 @@ protected:
 
   void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override {
     int i = matching_peer_indexes[peer_idx];
-    if (i >= 0 && i < num_clients) {
+    if (i >= 0 && i < MAX_CLIENTS) {
       // lookup pre-calculated shared_secret
       memcpy(dest_secret, known_clients[i].secret, PUB_KEY_SIZE);
     } else {
@@ -379,7 +393,7 @@ protected:
 
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override {
     int i = matching_peer_indexes[sender_idx];
-    if (i < 0 || i >= num_clients) {  // get from our known_clients table (sender SHOULD already be known in this context)
+    if (i < 0 || i >= MAX_CLIENTS) {  // get from our known_clients table (sender SHOULD already be known in this context)
       MESH_DEBUG_PRINTLN("onPeerDataRecv: invalid peer idx: %d", i);
       return;
     }
@@ -393,6 +407,7 @@ protected:
         if (reply_len == 0) return;  // invalid command
 
         client->last_timestamp = timestamp;
+        client->last_activity = getRTCClock()->getCurrentTime();
 
         if (packet->isRouteFlood()) {
           // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
@@ -421,6 +436,7 @@ protected:
         MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported text type received: flags=%02x", (uint32_t)flags);
       } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
         client->last_timestamp = sender_timestamp;
+        client->last_activity = getRTCClock()->getCurrentTime();
 
         // len can be > original length, but 'text' will be padded with zeroes
         data[len] = 0; // need to make a C string again, with null terminator
@@ -471,7 +487,7 @@ protected:
     // TODO: prevent replay attacks
     int i = matching_peer_indexes[sender_idx];
 
-    if (i >= 0 && i < num_clients) {  // get from our known_clients table (sender SHOULD already be known in this context)
+    if (i >= 0 && i < MAX_CLIENTS) {  // get from our known_clients table (sender SHOULD already be known in this context)
       MESH_DEBUG_PRINTLN("PATH to client, path_len=%d", (uint32_t) path_len);
       auto client = &known_clients[i];
       memcpy(client->out_path, path, client->out_path_len = path_len);  // store a copy of path, for sendDirect()
@@ -488,7 +504,7 @@ public:
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables), _board(&board)
   {
     my_radio = &radio;
-    num_clients = 0;
+    memset(known_clients, 0, sizeof(known_clients));
     next_local_advert = 0;
     _logging = false;
 
@@ -836,6 +852,4 @@ void loop() {
   }
 
   the_mesh.loop();
-
-  // TODO: periodically check for OLD/inactive entries in known_clients[], and evict
 }

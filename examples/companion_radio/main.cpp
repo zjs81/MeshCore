@@ -488,23 +488,25 @@ protected:
     uint32_t sender_timestamp;
     memcpy(&sender_timestamp, data, 4);
 
-    if (memcmp(&pending_login, contact.id.pub_key, 4) == 0) { // check for login response
+    if (pending_login && memcmp(&pending_login, contact.id.pub_key, 4) == 0) { // check for login response
       // yes, is response to pending sendLogin()
       pending_login = 0;
 
       int i = 0;
       if (memcmp(&data[4], "OK", 2) == 0) {    // legacy Repeater login OK response
         out_frame[i++] = PUSH_CODE_LOGIN_SUCCESS;
+        out_frame[i++] = 0;  // legacy: is_admin = false
       } else if (data[4] == RESP_SERVER_LOGIN_OK) {   // new login response
-        // TODO: check the keep_alive_interval in data[]
+        //  keep_alive_interval  = data[5] * 16
         out_frame[i++] = PUSH_CODE_LOGIN_SUCCESS;
+        out_frame[i++] = data[6];  // permissions (eg. is_admin)
       } else {
         out_frame[i++] = PUSH_CODE_LOGIN_FAIL;
+        out_frame[i++] = 0;  // reserved
       }
-      out_frame[i++] = 0;  // reserved
       memcpy(&out_frame[i], contact.id.pub_key, 6); i += 6;  // pub_key_prefix
       _serial->writeFrame(out_frame, i);
-    } else if (len > 4 && memcmp(&pending_status, contact.id.pub_key, 4) == 0) { // check for status response
+    } else if (len > 4 && pending_status && memcmp(&pending_status, contact.id.pub_key, 4) == 0) { // check for status response
       // yes, is response to pending sendStatusRequest()
       pending_status = 0;
 
