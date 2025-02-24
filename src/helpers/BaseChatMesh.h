@@ -27,6 +27,10 @@ struct ContactInfo {
 #define MSG_SEND_SENT_FLOOD   1
 #define MSG_SEND_SENT_DIRECT  2
 
+#define CMD_GET_STATUS      0x01   // same as _GET_STATS
+
+#define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
+
 class ContactVisitor {
 public:
   virtual void onContactVisit(const ContactInfo& contact) = 0;
@@ -108,7 +112,8 @@ public:
   mesh::Packet* createSelfAdvert(const char* name, double lat=0.0, double lon=0.0);
   int  sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& expected_ack, uint32_t& est_timeout);
   bool sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, const char* sender_name, const char* text, int text_len);
-  bool sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout);
+  int  sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout);
+  int  sendStatusRequest(const ContactInfo& recipient, uint32_t& est_timeout);
   bool shareContactZeroHop(const ContactInfo& contact);
   uint8_t exportContact(const ContactInfo& contact, uint8_t dest_buf[]);
   bool importContact(const uint8_t src_buf[], uint8_t len);

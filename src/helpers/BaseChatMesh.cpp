@@ -279,10 +279,7 @@ bool BaseChatMesh::importContact(const uint8_t src_buf[], uint8_t len) {
   return false; // error
 }
 
-bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout) {
-  uint8_t shared_secret[32];
-  self_id.calcSharedSecret(shared_secret, recipient.id); // TODO: cache this
-
+int BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, uint32_t& est_timeout) {
   int tlen;
   uint8_t temp[24];
   uint32_t now = getRTCClock()->getCurrentTimeUnique();
@@ -298,20 +295,44 @@ bool BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password,
     tlen = 4 + len;
   }
 
-  auto pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, recipient.id, shared_secret, temp, tlen);
+  auto pkt = createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, self_id, recipient.id, recipient.shared_secret, temp, tlen);
   if (pkt) {
     uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);
     if (recipient.out_path_len < 0) {
       sendFlood(pkt);
       est_timeout = calcFloodTimeoutMillisFor(t);
+      return MSG_SEND_SENT_FLOOD;
     } else {
       sendDirect(pkt, recipient.out_path, recipient.out_path_len);
       est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
+      return MSG_SEND_SENT_DIRECT;
     }
-  } else {
-    return false;  // failed
   }
-  return true;  // success
+  return MSG_SEND_FAILED;
+}
+
+int  BaseChatMesh::sendStatusRequest(const ContactInfo& recipient, uint32_t& est_timeout) {
+  uint8_t temp[13];
+  uint32_t now = getRTCClock()->getCurrentTimeUnique();
+  memcpy(temp, &now, 4);   // mostly an extra blob to help make packet_hash unique
+  temp[4] = CMD_GET_STATUS;
+  memset(&temp[5], 0, 4);  // reserved (possibly for 'since' param)
+  getRNG()->random(&temp[9], 4);   // random blob to help make packet-hash unique
+
+  auto pkt = createDatagram(PAYLOAD_TYPE_REQ, recipient.id, recipient.shared_secret, temp, sizeof(temp));
+  if (pkt) {
+    uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);
+    if (recipient.out_path_len < 0) {
+      sendFlood(pkt);
+      est_timeout = calcFloodTimeoutMillisFor(t);
+      return MSG_SEND_SENT_FLOOD;
+    } else {
+      sendDirect(pkt, recipient.out_path, recipient.out_path_len);
+      est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
+      return MSG_SEND_SENT_DIRECT;
+    }
+  }
+  return MSG_SEND_FAILED;
 }
 
 void BaseChatMesh::resetPathTo(ContactInfo& recipient) {
