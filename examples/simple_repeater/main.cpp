@@ -13,13 +13,14 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <RTClib.h>
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v4 (build: 17 Feb 2025)"
+#define FIRMWARE_VER_TEXT   "v5 (build: 25 Feb 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -749,10 +750,11 @@ StdRNG fast_rng;
 SimpleMeshTables tables;
 
 #ifdef ESP32
-ESP32RTCClock rtc_clock;
+ESP32RTCClock fallback_clock;
 #else
-VolatileRTCClock rtc_clock; 
+VolatileRTCClock fallback_clock; 
 #endif
+AutoDiscoverRTCClock rtc_clock(fallback_clock);
 
 MyMesh the_mesh(board, *new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, rtc_clock, tables);
 
@@ -768,8 +770,9 @@ void setup() {
 
   board.begin();
 #ifdef ESP32
-  rtc_clock.begin();
+  fallback_clock.begin();
 #endif
+  rtc_clock.begin(Wire);
 
 #ifdef SX126X_DIO3_TCXO_VOLTAGE
   float tcxo = SX126X_DIO3_TCXO_VOLTAGE;
