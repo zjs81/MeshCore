@@ -13,7 +13,6 @@
 #define  P_LORA_SCLK    (0 + 11)  // P0.11
 #define  P_LORA_MISO    (32 + 8)  // P1.8
 #define  P_LORA_MOSI    (32 + 9)  // P0.9
-#define  LR1110_POWER_EN  37
  
 #define LR11X0_DIO_AS_RF_SWITCH  true
 #define LR11X0_DIO3_TCXO_VOLTAGE   1.6
@@ -28,20 +27,6 @@ protected:
   uint8_t btn_prev_state;
 
 public:
-  void begin() {
-    // for future use, sub-classes SHOULD call this from their begin()
-    startup_reason = BD_STARTUP_NORMAL;
-    btn_prev_state = HIGH;
-
-    pinMode(BATTERY_PIN, INPUT);
-    pinMode(BUTTON_PIN, INPUT);
-    pinMode(LED_PIN, OUTPUT);
-
-// Doesn't seem to be a pwr en pin ...
-//    pinMode(LR1110_POWER_EN, OUTPUT);
-//    digitalWrite(LR1110_POWER_EN, HIGH);
-    delay(10);   // give sx1262 some time to power up
-  }
   void begin();
 
   uint16_t getBattMilliVolts() override {
@@ -66,17 +51,17 @@ public:
   }
 
   void powerOff() {
-    #ifdef GNSS_AIROHA
+    #ifdef HAS_GPS
         digitalWrite(GPS_VRTC_EN, LOW);
-        digitalWrite(PIN_GPS_RESET, LOW);
+        digitalWrite(GPS_RESET, LOW);
         digitalWrite(GPS_SLEEP_INT, LOW);
         digitalWrite(GPS_RTC_INT, LOW);
-        pinMode(GPS_RESETB_OUT, OUTPUT);
-        digitalWrite(GPS_RESETB_OUT, LOW);
+        pinMode(GPS_RESETB, OUTPUT);
+        digitalWrite(GPS_RESETB, LOW);
     #endif
     
-    #ifdef BUZZER_EN_PIN
-        digitalWrite(BUZZER_EN_PIN, LOW);
+    #ifdef BUZZER_EN
+        digitalWrite(BUZZER_EN, LOW);
     #endif
     
     #ifdef PIN_3V3_EN
