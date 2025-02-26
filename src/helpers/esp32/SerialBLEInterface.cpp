@@ -7,6 +7,8 @@
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
+#define ADVERT_RESTART_DELAY  1000   // millis
+
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   _pin_code = pin_code;
 
@@ -70,7 +72,7 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
 
     //pServer->removePeerDevice(pServer->getConnId(), true);
     pServer->disconnect(pServer->getConnId());
-    checkAdvRestart = true;
+    adv_restart_time = millis() + ADVERT_RESTART_DELAY;
   }
 }
 
@@ -92,7 +94,8 @@ void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param
 void SerialBLEInterface::onDisconnect(BLEServer* pServer) {
   BLE_DEBUG_PRINTLN("onDisconnect()");
   if (_isEnabled) {
-    checkAdvRestart = true;
+    adv_restart_time = millis() + ADVERT_RESTART_DELAY;
+
     // loop() will detect this on next loop, and set deviceConnected to false
   }
 }
@@ -131,7 +134,7 @@ void SerialBLEInterface::enable() {
   //pServer->getAdvertising()->setMaxInterval(1000);
 
   pServer->getAdvertising()->start();
-  checkAdvRestart = false;
+  adv_restart_time = 0;
 }
 
 void SerialBLEInterface::disable() {
@@ -142,7 +145,7 @@ void SerialBLEInterface::disable() {
   pServer->getAdvertising()->stop();
   pService->stop();
   oldDeviceConnected = deviceConnected = false;
-  checkAdvRestart = false;
+  adv_restart_time = 0;
 }
 
 size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
@@ -213,24 +216,24 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       //pServer->getAdvertising()->setMinInterval(500);
       //pServer->getAdvertising()->setMaxInterval(1000);
 
-      checkAdvRestart = true;
+      adv_restart_time = millis() + ADVERT_RESTART_DELAY;
     } else {
       BLE_DEBUG_PRINTLN("SerialBLEInterface -> stopping advertising");
       BLE_DEBUG_PRINTLN("SerialBLEInterface -> connecting...");
       // connecting
       // do stuff here on connecting
       pServer->getAdvertising()->stop();
-      checkAdvRestart = false;
+      adv_restart_time = 0;
     }
     oldDeviceConnected = deviceConnected;
   }
 
-  if (checkAdvRestart) {
+  if (adv_restart_time && millis() >= adv_restart_time) {
     if (pServer->getConnectedCount() == 0) {
       BLE_DEBUG_PRINTLN("SerialBLEInterface -> re-starting advertising");
       pServer->getAdvertising()->start();  // re-Start advertising
     }
-    checkAdvRestart = false;
+    adv_restart_time = 0;
   }
   return 0;
 }
