@@ -30,9 +30,13 @@ public:
   void begin();
 
   uint16_t getBattMilliVolts() override {
+  #ifdef BATTERY_PIN
     analogReadResolution(12);
     float volts = (analogRead(BATTERY_PIN) * ADC_MULTIPLIER * AREF_VOLTAGE) / 4096;
     return volts * 1000;
+  #else
+    return 0;
+  #endif
   }
 
   uint8_t getStartupReason() const override { return startup_reason; }
@@ -42,11 +46,13 @@ public:
   }
 
   int buttonStateChanged() {
+  #ifdef BUTTON_PIN
     uint8_t v = digitalRead(BUTTON_PIN);
     if (v != btn_prev_state) {
       btn_prev_state = v;
       return (v == LOW) ? 1 : -1;
     }
+  #endif
     return 0;
   }
 
@@ -68,8 +74,12 @@ public:
         digitalWrite(PIN_3V3_EN, LOW);
     #endif
 
+    #ifdef LED_PIN
     digitalWrite(LED_PIN, LOW);
+    #endif
+    #ifdef BUTTON_PIN
     nrf_gpio_cfg_sense_input(digitalPinToInterrupt(BUTTON_PIN), NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_SENSE_HIGH);
+    #endif
     sd_power_system_off();
   }
 

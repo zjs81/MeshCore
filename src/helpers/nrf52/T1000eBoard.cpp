@@ -10,9 +10,11 @@ void T1000eBoard::begin()
   startup_reason = BD_STARTUP_NORMAL;
   btn_prev_state = HIGH;
 
+#ifdef BUTTON_PIN
   pinMode(BATTERY_PIN, INPUT);
   pinMode(BUTTON_PIN, INPUT);
   pinMode(LED_PIN, OUTPUT);
+#endif
 
 #if defined(PIN_BOARD_SDA) && defined(PIN_BOARD_SCL)
   Wire.begin(PIN_BOARD_SDA, PIN_BOARD_SCL);
