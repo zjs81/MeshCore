@@ -211,7 +211,6 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       clearBuffers();
 
       BLE_DEBUG_PRINTLN("SerialBLEInterface -> disconnecting...");
-      delay(500); // give the bluetooth stack the chance to get things ready
 
       //pServer->getAdvertising()->setMinInterval(500);
       //pServer->getAdvertising()->setMaxInterval(1000);
