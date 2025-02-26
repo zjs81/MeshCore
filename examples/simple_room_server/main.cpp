@@ -20,7 +20,7 @@
 
 /* ------------------------------ Config -------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v5 (build: 25 Feb 2025)"
+#define FIRMWARE_VER_TEXT   "v6 (build: 27 Feb 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0

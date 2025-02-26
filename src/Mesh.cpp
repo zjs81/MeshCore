@@ -23,6 +23,10 @@ uint32_t Mesh::getDirectRetransmitDelay(const Packet* packet) {
   return 0;  // by default, no delay
 }
 
+uint32_t Mesh::getCADFailRetryDelay() const {
+  return _rng->nextInt(1, 4)*120;
+}
+
 int Mesh::searchPeersByHash(const uint8_t* hash) {
   return 0;  // not found
 }
