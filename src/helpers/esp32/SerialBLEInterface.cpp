@@ -12,7 +12,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   // Create the BLE Device
   BLEDevice::init(device_name);
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT_MITM);
   BLEDevice::setSecurityCallbacks(this);
   BLEDevice::setMTU(MAX_FRAME_SIZE);
 
