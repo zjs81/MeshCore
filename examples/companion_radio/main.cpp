@@ -438,12 +438,12 @@ protected:
     return false;
   }
 
-  void onMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+  void queueMessage(const ContactInfo& from, uint8_t txt_type, uint8_t path_len, uint32_t sender_timestamp, const char *text) {
     int i = 0;
     out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV;
     memcpy(&out_frame[i], from.id.pub_key, 6); i += 6;  // just 6-byte prefix
     out_frame[i++] = path_len;
-    out_frame[i++] = TXT_TYPE_PLAIN;
+    out_frame[i++] = txt_type;
     memcpy(&out_frame[i], &sender_timestamp, 4); i += 4;
     int tlen = strlen(text);   // TODO: UTF-8 ??
     if (i + tlen > MAX_FRAME_SIZE) {
@@ -459,6 +459,14 @@ protected:
     } else {
       soundBuzzer();
     }
+  }
+
+  void onMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+    queueMessage(from, TXT_TYPE_PLAIN, path_len, sender_timestamp, text);
+  }
+
+  void onCommandDataRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+    queueMessage(from, TXT_TYPE_CLI_DATA, path_len, sender_timestamp, text);
   }
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) override {
@@ -677,12 +685,18 @@ public:
       memcpy(&msg_timestamp, &cmd_frame[i], 4); i += 4;
       uint8_t* pub_key_prefix = &cmd_frame[i]; i += 6;
       ContactInfo* recipient = lookupContactByPubKey(pub_key_prefix, 6);
-      if (recipient && attempt < 4 && txt_type == TXT_TYPE_PLAIN) {
+      if (recipient && attempt < 4 && (txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_CLI_DATA)) {
         char *text = (char *) &cmd_frame[i];
         int tlen = len - i;
         uint32_t est_timeout;
         text[tlen] = 0;  // ensure null
-        int result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack_crc, est_timeout);
+        int result;
+        if (txt_type == TXT_TYPE_CLI_DATA) {
+          result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout);
+          expected_ack_crc = 0;  // no Ack expected
+        } else {
+          result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack_crc, est_timeout);
+        }
         // TODO: add expected ACK to table
         if (result == MSG_SEND_FAILED) {
           writeErrFrame();

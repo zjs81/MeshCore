@@ -99,13 +99,13 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
   if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
     uint32_t timestamp;
     memcpy(&timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
-    uint flags = data[4];   // message attempt number, and other flags
+    uint flags = data[4] >> 2;   // message attempt number, and other flags
 
     // len can be > original length, but 'text' will be padded with zeroes
     data[len] = 0; // need to make a C string again, with null terminator
 
     //if ( ! alreadyReceived timestamp ) {
-    if ((flags >> 2) == TXT_TYPE_PLAIN) {
+    if (flags == TXT_TYPE_PLAIN) {
       onMessageRecv(from, packet->isRouteFlood() ? packet->path_len : 0xFF, timestamp, (const char *) &data[5]);  // let UI know
 
       uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
@@ -126,8 +126,19 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
           }
         }
       }
+    } else if (flags == TXT_TYPE_CLI_DATA) {
+      onCommandDataRecv(from, packet->isRouteFlood() ? packet->path_len : 0xFF, timestamp, (const char *) &data[5]);  // let UI know
+      // NOTE: no ack expected for CLI_DATA replies
+
+      if (packet->isRouteFlood()) {
+        // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the ACK
+        mesh::Packet* path = createPathReturn(from.id, secret, packet->path, packet->path_len, 0, NULL, 0);
+        if (path) sendFlood(path);
+      }
+    } else if (flags == TXT_TYPE_SIGNED_PLAIN) {
+      // TODO
     } else {
-      MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported message type: %u", (uint32_t) (flags >> 2));
+      MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported message type: %u", (uint32_t) flags);
     }
   } else if (type == PAYLOAD_TYPE_RESPONSE && len > 0) {
     onContactResponse(from, data, len);
@@ -215,6 +226,32 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
 
   uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);
 
+  int rc;
+  if (recipient.out_path_len < 0) {
+    sendFlood(pkt);
+    txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
+    rc = MSG_SEND_SENT_FLOOD;
+  } else {
+    sendDirect(pkt, recipient.out_path, recipient.out_path_len);
+    txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
+    rc = MSG_SEND_SENT_DIRECT;
+  }
+  return rc;
+}
+
+int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt, const char* text, uint32_t& est_timeout) {
+  int text_len = strlen(text);
+  if (text_len > MAX_TEXT_LEN) return MSG_SEND_FAILED;
+
+  uint8_t temp[5+MAX_TEXT_LEN+1];
+  memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
+  temp[4] = (attempt & 3) | (TXT_TYPE_CLI_DATA << 2);
+  memcpy(&temp[5], text, text_len + 1);
+
+  auto pkt = createDatagram(PAYLOAD_TYPE_TXT_MSG, recipient.id, recipient.shared_secret, temp, 5 + text_len);
+  if (pkt == NULL) return MSG_SEND_FAILED;
+
+  uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);
   int rc;
   if (recipient.out_path_len < 0) {
     sendFlood(pkt);

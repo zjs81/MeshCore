@@ -469,7 +469,7 @@ protected:
             timestamp++;
           }
           memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
-          temp[4] = (TXT_TYPE_PLAIN << 2);   // TODO: change this to TXT_TYPE_CLI_DATA soon
+          temp[4] = (TXT_TYPE_CLI_DATA << 2);   // NOTE: legacy was: TXT_TYPE_PLAIN
 
           // calc expected ACK reply
           //mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
@@ -581,8 +581,14 @@ public:
     }
   }
 
-  void handleCommand(uint32_t sender_timestamp, const char* command, char reply[]) {
+  void handleCommand(uint32_t sender_timestamp, const char* command, char* reply) {
     while (*command == ' ') command++;   // skip leading spaces
+
+    if (strlen(command) > 4 && command[2] == '|') {  // optional prefix (for companion radio CLI)
+      memcpy(reply, command, 3);  // reflect the prefix back
+      reply += 3;
+      command += 3;
+    }
 
     if (memcmp(command, "reboot", 6) == 0) {
       board.reboot();  // doesn't return

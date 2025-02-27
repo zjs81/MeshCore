@@ -259,6 +259,9 @@ protected:
     }
   }
 
+  void onCommandDataRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+  }
+
   void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) override {
     if (in_path_len < 0) {
       Serial.printf("PUBLIC CHANNEL MSG -> (Direct!)\n");

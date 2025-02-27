@@ -423,6 +423,7 @@ protected:
         if (flags == TXT_TYPE_CLI_DATA) {
           if (client->is_admin) {
             handleAdminCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+            temp[4] = (TXT_TYPE_CLI_DATA << 2);  // attempt and flags,  (NOTE: legacy was: TXT_TYPE_PLAIN)
             send_ack = true;
           } else {
             temp[5] = 0;  // no reply
@@ -452,7 +453,6 @@ protected:
             now++;
           }
           memcpy(temp, &now, 4);   // mostly an extra blob to help make packet_hash unique
-          temp[4] = (TXT_TYPE_PLAIN << 2);  // attempt and flags
 
           // calc expected ACK reply
           //mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
@@ -604,8 +604,14 @@ public:
     }
   }
 
-  void handleAdminCommand(uint32_t sender_timestamp, const char* command, char reply[]) {
+  void handleAdminCommand(uint32_t sender_timestamp, const char* command, char* reply) {
     while (*command == ' ') command++;   // skip leading spaces
+
+    if (strlen(command) > 4 && command[2] == '|') {  // optional prefix (for companion radio CLI)
+      memcpy(reply, command, 3);  // reflect the prefix back
+      reply += 3;
+      command += 3;
+    }
 
     if (memcmp(command, "reboot", 6) == 0) {
       board.reboot();  // doesn't return
