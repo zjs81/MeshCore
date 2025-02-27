@@ -16,6 +16,7 @@
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
+#include <helpers/CommonCLI.h>
 #include <RTClib.h>
 
 /* ------------------------------ Config -------------------------------- */
@@ -60,9 +61,6 @@
   #define MAX_UNSYNCED_POSTS    16
 #endif
 
-#define MIN_LOCAL_ADVERT_INTERVAL   8
-
-
 #if defined(HELTEC_LORA_V3)
   #include <helpers/HeltecV3Board.h>
   #include <helpers/CustomSX1262Wrapper.h>
@@ -85,16 +83,6 @@
 #endif
 
 /* ------------------------------ Code -------------------------------- */
-
-// Believe it or not, this std C function is busted on some platforms!
-static uint32_t _atoi(const char* sp) {
-  uint32_t n = 0;
-  while (*sp && *sp >= '0' && *sp <= '9') {
-    n *= 10;
-    n += (*sp++ - '0');
-  }
-  return n;
-}
 
 struct ClientInfo {
   mesh::Identity id;
@@ -133,28 +121,13 @@ struct PostInfo {
 
 #define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
 
-struct NodePrefs {  // persisted to file
-  float airtime_factor;
-  char node_name[32];
-  double node_lat, node_lon;
-  char password[16];
-  float freq;
-  uint8_t tx_power_dbm;
-  uint8_t disable_fwd;
-  uint8_t advert_interval;   // minutes
-  uint8_t unused;
-  float rx_delay_base;
-  float tx_delay_factor;
-  char guest_password[16];
-  float direct_tx_delay_factor;
-};
-
-class MyMesh : public mesh::Mesh {
+class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   RadioLibWrapper* my_radio;
   FILESYSTEM* _fs;
   mesh::MainBoard* _board;
   unsigned long next_local_advert;
   NodePrefs _prefs;
+  CommonCLI _cli;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
   ClientInfo known_clients[MAX_CLIENTS];
@@ -248,20 +221,6 @@ class MyMesh : public mesh::Mesh {
       }
     }
     return false;
-  }
-
-  void checkAdvertInterval() {
-    if (_prefs.advert_interval < MIN_LOCAL_ADVERT_INTERVAL) {
-      _prefs.advert_interval = 0;  // turn it off, now that device has been manually configured
-    }
-  }
-
-  void updateAdvertTimer() {
-    if (_prefs.advert_interval > 0) {  // schedule local advert timer
-      next_local_advert = futureMillis(_prefs.advert_interval * 60 * 1000);
-    } else {
-      next_local_advert = 0;  // stop the timer
-    }
   }
 
   mesh::Packet* createSelfAdvert() {
@@ -422,7 +381,7 @@ protected:
         bool send_ack;
         if (flags == TXT_TYPE_CLI_DATA) {
           if (client->is_admin) {
-            handleAdminCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+            _cli.handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
             temp[4] = (TXT_TYPE_CLI_DATA << 2);  // attempt and flags,  (NOTE: legacy was: TXT_TYPE_PLAIN)
             send_ack = true;
           } else {
@@ -535,7 +494,8 @@ protected:
 
 public:
   MyMesh(mesh::MainBoard& board, RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
-     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables), _board(&board)
+     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables), 
+        _board(&board), _cli(board, this, &_prefs, this)
   {
     my_radio = &radio;
     next_local_advert = 0;
@@ -552,7 +512,7 @@ public:
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
     _prefs.disable_fwd = 1;
-    _prefs.advert_interval = 2;  // default to 2 minutes for NEW installs
+    _prefs.advert_interval = 1;  // default to 2 minutes for NEW installs
   #ifdef ROOM_PASSWORD
     StrHelper::strncpy(_prefs.guest_password, ROOM_PASSWORD, sizeof(_prefs.guest_password));
   #endif
@@ -566,6 +526,8 @@ public:
 
   float getFreqPref() const { return _prefs.freq; }
   uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
+
+  CommonCLI* getCLI() { return &_cli; }
 
   void begin(FILESYSTEM* fs) {
     mesh::Mesh::begin();
@@ -582,7 +544,9 @@ public:
     updateAdvertTimer();
   }
 
-  void savePrefs() {
+  const char* getFirmwareVer() override { return FIRMWARE_VER_TEXT; }
+
+  void savePrefs() override {
 #if defined(NRF52_PLATFORM)
     File file = _fs->open("/node_prefs", FILE_O_WRITE);
     if (file) { file.seek(0); file.truncate(); }
@@ -595,7 +559,18 @@ public:
     }
   }
 
-  void sendSelfAdvertisement(int delay_millis) {
+  bool formatFileSystem() override {
+    #if defined(NRF52_PLATFORM)
+      return InternalFS.format();
+    #elif defined(ESP32)
+      return SPIFFS.format();
+    #else
+      #error "need to implement file system erase"
+      return false;
+    #endif
+  }
+    
+  void sendSelfAdvertisement(int delay_millis) override {
     mesh::Packet* pkt = createSelfAdvert();
     if (pkt) {
       sendFlood(pkt, delay_millis);
@@ -604,134 +579,17 @@ public:
     }
   }
 
-  void handleAdminCommand(uint32_t sender_timestamp, const char* command, char* reply) {
-    while (*command == ' ') command++;   // skip leading spaces
-
-    if (strlen(command) > 4 && command[2] == '|') {  // optional prefix (for companion radio CLI)
-      memcpy(reply, command, 3);  // reflect the prefix back
-      reply += 3;
-      command += 3;
-    }
-
-    if (memcmp(command, "reboot", 6) == 0) {
-      board.reboot();  // doesn't return
-    } else if (memcmp(command, "advert", 6) == 0) {
-      sendSelfAdvertisement(400);
-      strcpy(reply, "OK - Advert sent");
-    } else if (memcmp(command, "clock sync", 10) == 0) {
-      uint32_t curr = getRTCClock()->getCurrentTime();
-      if (sender_timestamp > curr) {
-        getRTCClock()->setCurrentTime(sender_timestamp + 1);
-        strcpy(reply, "OK - clock set");
-      } else {
-        strcpy(reply, "ERR: clock cannot go backwards");
-      }
-    } else if (memcmp(command, "start ota", 9) == 0) {
-      if (_board->startOTAUpdate()) {
-        strcpy(reply, "OK");
-      } else {
-        strcpy(reply, "Error");
-      }
-    } else if (memcmp(command, "clock", 5) == 0) {
-      uint32_t now = getRTCClock()->getCurrentTime();
-      DateTime dt = DateTime(now);
-      sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
-    } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
-      uint32_t secs = _atoi(&command[5]);
-      uint32_t curr = getRTCClock()->getCurrentTime();
-      if (secs > curr) {
-        getRTCClock()->setCurrentTime(secs);
-        strcpy(reply, "(OK - clock set!)");
-      } else {
-        strcpy(reply, "(ERR: clock cannot go backwards)");
-      }
-    } else if (memcmp(command, "password ", 9) == 0) {
-      // change admin password
-      StrHelper::strncpy(_prefs.password, &command[9], sizeof(_prefs.password));
-      savePrefs();
-      sprintf(reply, "password now: %s", _prefs.password);   // echo back just to let admin know for sure!!
-    } else if (memcmp(command, "set ", 4) == 0) {
-      const char* config = &command[4];
-      if (memcmp(config, "af ", 3) == 0) {
-        _prefs.airtime_factor = atof(&config[3]);
-        savePrefs();
-        strcpy(reply, "OK");
-      } else if (memcmp(config, "advert.interval ", 16) == 0) {
-        int mins = _atoi(&config[16]);
-        if (mins > 0 && mins < MIN_LOCAL_ADVERT_INTERVAL) {
-          sprintf(reply, "Error: min is %d mins", MIN_LOCAL_ADVERT_INTERVAL);
-        } else if (mins > 120) {
-          strcpy(reply, "Error: max is 120 mins");
-        } else {
-          _prefs.advert_interval = (uint8_t)mins;
-          updateAdvertTimer();
-          savePrefs();
-          strcpy(reply, "OK");
-        }
-      } else if (memcmp(config, "guest.password ", 15) == 0) {
-        StrHelper::strncpy(_prefs.guest_password, &config[15], sizeof(_prefs.guest_password));
-        savePrefs();
-        strcpy(reply, "OK");
-      } else if (memcmp(config, "name ", 5) == 0) {
-        StrHelper::strncpy(_prefs.node_name, &config[5], sizeof(_prefs.node_name));
-        savePrefs();
-        strcpy(reply, "OK");
-      } else if (memcmp(config, "repeat ", 7) == 0) {
-        _prefs.disable_fwd = memcmp(&config[7], "off", 3) == 0;
-        savePrefs();
-        strcpy(reply, _prefs.disable_fwd ? "OK - repeat is now OFF" : "OK - repeat is now ON");
-      } else if (memcmp(config, "lat ", 4) == 0) {
-        _prefs.node_lat = atof(&config[4]);
-        savePrefs();
-        strcpy(reply, "OK");
-      } else if (memcmp(config, "lon ", 4) == 0) {
-        _prefs.node_lon = atof(&config[4]);
-        savePrefs();
-        strcpy(reply, "OK");
-      } else if (memcmp(config, "rxdelay ", 8) == 0) {
-        float db = atof(&config[8]);
-        if (db >= 0) {
-          _prefs.rx_delay_base = db;
-          savePrefs();
-          strcpy(reply, "OK");
-        } else {
-          strcpy(reply, "Error, cannot be negative");
-        }
-      } else if (memcmp(config, "txdelay ", 8) == 0) {
-        float f = atof(&config[8]);
-        if (f >= 0) {
-          _prefs.tx_delay_factor = f;
-          savePrefs();
-          strcpy(reply, "OK");
-        } else {
-          strcpy(reply, "Error, cannot be negative");
-        }
-      } else if (memcmp(config, "direct.txdelay ", 15) == 0) {
-        float f = atof(&config[15]);
-        if (f >= 0) {
-          _prefs.direct_tx_delay_factor = f;
-          savePrefs();
-          strcpy(reply, "OK");
-        } else {
-          strcpy(reply, "Error, cannot be negative");
-        }
-      } else if (memcmp(config, "tx ", 3) == 0) {
-        _prefs.tx_power_dbm = atoi(&config[3]);
-        savePrefs();
-        strcpy(reply, "OK - reboot to apply");
-      } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
-        _prefs.freq = atof(&config[5]);
-        savePrefs();
-        strcpy(reply, "OK - reboot to apply");
-      } else {
-        sprintf(reply, "unknown config: %s", config);
-      }
-    } else if (memcmp(command, "ver", 3) == 0) {
-      strcpy(reply, FIRMWARE_VER_TEXT);
+  void updateAdvertTimer() override {
+    if (_prefs.advert_interval > 0) {  // schedule local advert timer
+      next_local_advert = futureMillis((uint32_t)_prefs.advert_interval * 2 * 60 * 1000);
     } else {
-      strcpy(reply, "?");   // unknown command
+      next_local_advert = 0;  // stop the timer
     }
   }
+
+  void setLoggingOn(bool enable) override { /* no-op */ }
+  void eraseLogFile() override { /* no-op */ }
+  void dumpLogFile() override { /* no-op */ }
 
   void loop() {
     mesh::Mesh::loop();
@@ -902,7 +760,7 @@ void loop() {
   if (len > 0 && command[len - 1] == '\r') {  // received complete line
     command[len - 1] = 0;  // replace newline with C string null terminator
     char reply[160];
-    the_mesh.handleAdminCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+    the_mesh.getCLI()->handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
     if (reply[0]) {
       Serial.print("  -> "); Serial.println(reply);
     }
