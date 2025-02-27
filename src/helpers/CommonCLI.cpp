@@ -68,6 +68,35 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       checkAdvertInterval();
       savePrefs();
       sprintf(reply, "password now: %s", _prefs->password);   // echo back just to let admin know for sure!!
+    } else if (memcmp(command, "get ", 4) == 0) {
+      const char* config = &command[4];
+      if (memcmp(config, "af", 2) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->airtime_factor));
+      } else if (memcmp(config, "advert.interval", 15) == 0) {
+        sprintf(reply, "> %d", ((uint32_t) _prefs->advert_interval) * 2);
+      } else if (memcmp(config, "guest.password", 14) == 0) {
+        sprintf(reply, "> %s", _prefs->guest_password);
+      } else if (memcmp(config, "name", 4) == 0) {
+        sprintf(reply, "> %s", _prefs->node_name);
+      } else if (memcmp(config, "repeat", 6) == 0) {
+        sprintf(reply, "> %s", _prefs->disable_fwd ? "off" : "on");
+      } else if (memcmp(config, "lat", 3) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->node_lat));
+      } else if (memcmp(config, "lon", 3) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->node_lon));
+      } else if (memcmp(config, "rxdelay", 7) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->rx_delay_base));
+      } else if (memcmp(config, "txdelay", 7) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->tx_delay_factor));
+      } else if (memcmp(config, "direct.txdelay", 14) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->direct_tx_delay_factor));
+      } else if (memcmp(config, "tx", 2) == 0 && (config[2] == 0 || config[2] == ' ')) {
+        sprintf(reply, "> %d", (uint32_t) _prefs->tx_power_dbm);
+      } else if (memcmp(config, "freq", 4) == 0) {
+        sprintf(reply, "> %s", StrHelper::ftoa(_prefs->freq));
+      } else {
+        sprintf(reply, "??: %s", config);
+      }
     } else if (memcmp(command, "set ", 4) == 0) {
       const char* config = &command[4];
       if (memcmp(config, "af ", 3) == 0) {
