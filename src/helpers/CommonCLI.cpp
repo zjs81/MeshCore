@@ -84,6 +84,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         sprintf(reply, "> %s", StrHelper::ftoa(_prefs->node_lat));
       } else if (memcmp(config, "lon", 3) == 0) {
         sprintf(reply, "> %s", StrHelper::ftoa(_prefs->node_lon));
+      } else if (memcmp(config, "radio", 5) == 0) {
+        char freq[16], bw[16];
+        strcpy(freq, StrHelper::ftoa(_prefs->freq));
+        strcpy(bw, StrHelper::ftoa(_prefs->bw));
+        sprintf(reply, "> %s,%s,%d,%d", freq, bw, (uint32_t)_prefs->sf, (uint32_t)_prefs->cr);
       } else if (memcmp(config, "rxdelay", 7) == 0) {
         sprintf(reply, "> %s", StrHelper::ftoa(_prefs->rx_delay_base));
       } else if (memcmp(config, "txdelay", 7) == 0) {
@@ -128,6 +133,26 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         _prefs->disable_fwd = memcmp(&config[7], "off", 3) == 0;
         savePrefs();
         strcpy(reply, _prefs->disable_fwd ? "OK - repeat is now OFF" : "OK - repeat is now ON");
+      } else if (memcmp(config, "radio ", 6) == 0) {
+        strcpy(tmp, &config[6]);
+        const char *parts[4];
+        int num = mesh::Utils::parseTextParts(tmp, parts, 4);
+        float freq  = num > 0 ? atof(parts[0]) : 0.0f;
+        float bw    = num > 1 ? atof(parts[1]) : 0.0f;
+        uint8_t sf  = num > 2 ? atoi(parts[2]) : 0;
+        uint8_t cr  = num > 3 ? atoi(parts[3]) : 0;
+        if (freq >= 300.0f && freq <= 2500.0f && sf >= 7 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f) {
+          _prefs->sf = sf;
+          _prefs->cr = cr;
+          _prefs->freq = freq;
+          _prefs->bw = bw;
+          _callbacks->savePrefs();
+  
+          delay(100);
+          _board->reboot();  // doesn't return
+        } else {
+          strcpy(reply, "Error, invalid radio params");
+        }
       } else if (memcmp(config, "lat ", 4) == 0) {
         _prefs->node_lat = atof(&config[4]);
         checkAdvertInterval();

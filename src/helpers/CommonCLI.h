@@ -41,6 +41,7 @@ class CommonCLI {
   NodePrefs* _prefs;
   CommonCLICallbacks* _callbacks;
   mesh::MainBoard* _board;
+  char tmp[80];
 
   mesh::RTCClock* getRTCClock() { return _mesh->getRTCClock(); }
   void savePrefs() { _callbacks->savePrefs(); }
