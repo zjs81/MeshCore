@@ -16,6 +16,11 @@ struct NodePrefs {  // persisted to file
     float tx_delay_factor;
     char guest_password[16];
     float direct_tx_delay_factor;
+    uint8_t sf;
+    uint8_t cr;
+    uint8_t reserved1;
+    uint8_t reserved2;
+    float bw;
 };
 
 class CommonCLICallbacks {
@@ -28,6 +33,7 @@ public:
   virtual void setLoggingOn(bool enable) = 0;
   virtual void eraseLogFile() = 0;
   virtual void dumpLogFile() = 0;
+  virtual void setTxPower(uint8_t power_dbm) = 0;
 };
 
 class CommonCLI {

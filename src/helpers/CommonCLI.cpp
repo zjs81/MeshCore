@@ -168,7 +168,8 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       } else if (memcmp(config, "tx ", 3) == 0) {
         _prefs->tx_power_dbm = atoi(&config[3]);
         savePrefs();
-        strcpy(reply, "OK - reboot to apply");
+        _callbacks->setTxPower(_prefs->tx_power_dbm);
+        strcpy(reply, "OK");
       } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
         _prefs->freq = atof(&config[5]);
         savePrefs();

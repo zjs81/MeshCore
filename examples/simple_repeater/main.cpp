@@ -118,6 +118,7 @@ struct ClientInfo {
 class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   RadioLibWrapper* my_radio;
   FILESYSTEM* _fs;
+  RADIO_CLASS* _phy;
   mesh::MainBoard* _board;
   unsigned long next_local_advert;
   bool _logging;
@@ -466,9 +467,9 @@ protected:
   }
 
 public:
-  MyMesh(mesh::MainBoard& board, RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
+  MyMesh(RADIO_CLASS& phy, mesh::MainBoard& board, RadioLibWrapper& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables),
-         _board(&board), _cli(board, this, &_prefs, this)
+        _phy(&phy), _board(&board), _cli(board, this, &_prefs, this)
   {
     my_radio = &radio;
     memset(known_clients, 0, sizeof(known_clients));
@@ -485,12 +486,12 @@ public:
     _prefs.node_lon = ADVERT_LON;
     StrHelper::strncpy(_prefs.password, ADMIN_PASSWORD, sizeof(_prefs.password));
     _prefs.freq = LORA_FREQ;
+    _prefs.sf = LORA_SF;
+    _prefs.bw = LORA_BW;
+    _prefs.cr = LORA_CR;
     _prefs.tx_power_dbm = LORA_TX_POWER;
     _prefs.advert_interval = 1;  // default to 2 minutes for NEW installs
   }
-
-  float getFreqPref() const { return _prefs.freq; }
-  uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
 
   CommonCLI* getCLI() { return &_cli; }
 
@@ -505,6 +506,12 @@ public:
         file.close();
       }
     }
+
+    _phy->setFrequency(_prefs.freq);
+    _phy->setSpreadingFactor(_prefs.sf);
+    _phy->setBandwidth(_prefs.bw);
+    _phy->setCodingRate(_prefs.cr);
+    _phy->setOutputPower(_prefs.tx_power_dbm);
 
     updateAdvertTimer();
   }
@@ -570,6 +577,10 @@ public:
     }
   }
 
+  void setTxPower(uint8_t power_dbm) override {
+    _phy->setOutputPower(power_dbm);
+  }
+
   void loop() {
     mesh::Mesh::loop();
 
@@ -602,7 +613,7 @@ VolatileRTCClock fallback_clock;
 #endif
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 
-MyMesh the_mesh(board, *new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, rtc_clock, tables);
+MyMesh the_mesh(radio, board, *new WRAPPER_CLASS(radio, board), *new ArduinoMillis(), fast_rng, rtc_clock, tables);
 
 void halt() {
   while (1) ;
@@ -677,13 +688,6 @@ void setup() {
   command[0] = 0;
 
   the_mesh.begin(fs);
-
-  if (LORA_FREQ != the_mesh.getFreqPref()) {
-    radio.setFrequency(the_mesh.getFreqPref());
-  }
-  if (LORA_TX_POWER != the_mesh.getTxPowerPref()) {
-    radio.setOutputPower(the_mesh.getTxPowerPref());
-  }
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement(2000);
