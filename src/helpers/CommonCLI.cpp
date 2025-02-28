@@ -147,9 +147,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
           _prefs->freq = freq;
           _prefs->bw = bw;
           _callbacks->savePrefs();
-  
-          delay(100);
-          _board->reboot();  // doesn't return
+          strcpy(reply, "OK");
         } else {
           strcpy(reply, "Error, invalid radio params");
         }
