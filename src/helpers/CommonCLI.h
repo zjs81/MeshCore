@@ -16,6 +16,7 @@ struct NodePrefs {  // persisted to file
     float tx_delay_factor;
     char guest_password[16];
     float direct_tx_delay_factor;
+    uint32_t guard;
     uint8_t sf;
     uint8_t cr;
     uint8_t reserved1;
