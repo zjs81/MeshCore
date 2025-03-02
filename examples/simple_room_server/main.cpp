@@ -305,7 +305,7 @@ protected:
       // TODO: maybe reply with count of messages waiting to be synced for THIS client?
       reply_data[4] = RESP_SERVER_LOGIN_OK;
       reply_data[5] = (CLIENT_KEEP_ALIVE_SECS >> 4);  // NEW: recommended keep-alive interval (secs / 16)
-      reply_data[6] = 0;  // FUTURE: reserved
+      reply_data[6] = is_admin ? 1 : 0;
       reply_data[7] = 0;  // FUTURE: reserved
       memcpy(&reply_data[8], "OK", 2);  // REVISIT: not really needed
 
