@@ -126,6 +126,8 @@ static uint32_t _atoi(const char* sp) {
 #define CMD_SEND_RAW_DATA         25
 #define CMD_SEND_LOGIN            26
 #define CMD_SEND_STATUS_REQ       27
+#define CMD_HAS_CONNECTION        28
+#define CMD_LOGOUT                29   // 'Disconnect'
 
 #define RESP_CODE_OK                0
 #define RESP_CODE_ERR               1
@@ -435,7 +437,7 @@ protected:
       expected_ack_crc = 0;  // reset our expected hash, now that we have received ACK
       return true;
     }
-    return false;
+    return checkConnectionsAck(data);
   }
 
   void queueMessage(const ContactInfo& from, uint8_t txt_type, uint8_t path_len, uint32_t sender_timestamp, const uint8_t* extra, int extra_len, const char *text) {
@@ -465,14 +467,17 @@ protected:
   }
 
   void onMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+    markConnectionActive(from);   // in case this is from a server, and we have a connection
     queueMessage(from, TXT_TYPE_PLAIN, path_len, sender_timestamp, NULL, 0, text);
   }
 
   void onCommandDataRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
+    markConnectionActive(from);   // in case this is from a server, and we have a connection
     queueMessage(from, TXT_TYPE_CLI_DATA, path_len, sender_timestamp, NULL, 0, text);
   }
 
   void onSignedMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const uint8_t *sender_prefix, const char *text) override {
+    markConnectionActive(from);
     saveContacts();   // from.sync_since change needs to be persisted
     queueMessage(from, TXT_TYPE_SIGNED_PLAIN, path_len, sender_timestamp, sender_prefix, 4, text);
   }
@@ -513,7 +518,10 @@ protected:
         out_frame[i++] = PUSH_CODE_LOGIN_SUCCESS;
         out_frame[i++] = 0;  // legacy: is_admin = false
       } else if (data[4] == RESP_SERVER_LOGIN_OK) {   // new login response
-        //  keep_alive_interval  = data[5] * 16
+        uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
+        if (keep_alive_secs > 0) {
+          startConnection(contact, keep_alive_secs);
+        }
         out_frame[i++] = PUSH_CODE_LOGIN_SUCCESS;
         out_frame[i++] = data[6];  // permissions (eg. is_admin)
       } else {
@@ -1021,6 +1029,17 @@ public:
       } else {
         writeErrFrame();  // contact not found
       }
+    } else if (cmd_frame[0] == CMD_HAS_CONNECTION && len >= 1+PUB_KEY_SIZE) {
+      uint8_t* pub_key = &cmd_frame[1];
+      if (hasConnectionTo(pub_key)) {
+        writeOKFrame();
+      } else {
+        writeErrFrame();
+      }
+    } else if (cmd_frame[0] == CMD_LOGOUT && len >= 1+PUB_KEY_SIZE) {
+      uint8_t* pub_key = &cmd_frame[1];
+      stopConnection(pub_key);
+      writeOKFrame();
     } else {
       writeErrFrame();
       MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
@@ -1050,6 +1069,8 @@ public:
         _serial->writeFrame(out_frame, 5);
         _iter_started = false;
       }
+    } else if (!_serial->isWriteBusy()) {
+      checkConnections();
     }
   }
 };

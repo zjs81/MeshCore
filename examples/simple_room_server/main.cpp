@@ -117,7 +117,8 @@ struct PostInfo {
 
 #define CLIENT_KEEP_ALIVE_SECS   128
 
-#define REQ_TYPE_KEEP_ALIVE   1
+#define REQ_TYPE_GET_STATUS      0x01   // same as _GET_STATS
+#define REQ_TYPE_KEEP_ALIVE      0x02
 
 #define RESP_SERVER_LOGIN_OK      0   // response to ANON_REQ
 
@@ -436,12 +437,11 @@ protected:
         uint32_t forceSince = 0;
         if (len >= 9) {   // optional - last post_timestamp client received
           memcpy(&forceSince, &data[5], 4);    // NOTE: this may be 0, if part of decrypted PADDING!
+        } else {
+          memcpy(&data[5], &forceSince, 4);  // make sure there are zeroes in payload (for ack_hash calc below)
         }
         if (forceSince > 0) { 
           client->sync_since = forceSince;    // force-update the 'sync since'
-          len = 9;   // for ACK hash calc below
-        } else {
-          len = 5;   // for ACK hash calc below
         }
 
         uint32_t now = getRTCClock()->getCurrentTime();
@@ -455,7 +455,7 @@ protected:
         // RULE: only send keep_alive response DIRECT!
         if (client->out_path_len >= 0) {
           uint32_t ack_hash;    // calc ACK to prove to sender that we got request
-          mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, len, client->id.pub_key, PUB_KEY_SIZE);
+          mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 9, client->id.pub_key, PUB_KEY_SIZE);
 
           auto reply = createAck(ack_hash);
           if (reply) {
