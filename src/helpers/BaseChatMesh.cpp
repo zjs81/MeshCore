@@ -136,7 +136,29 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
         if (path) sendFlood(path);
       }
     } else if (flags == TXT_TYPE_SIGNED_PLAIN) {
-      // TODO
+      if (timestamp > from.sync_since) {  // make sure 'sync_since' is up-to-date
+        from.sync_since = timestamp;
+      }
+      onSignedMessageRecv(from, packet->isRouteFlood() ? packet->path_len : 0xFF, timestamp, &data[5], (const char *) &data[9]);  // let UI know
+
+      uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
+      mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 9 + strlen((char *)&data[9]), from.id.pub_key, PUB_KEY_SIZE);
+
+      if (packet->isRouteFlood()) {
+        // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the ACK
+        mesh::Packet* path = createPathReturn(from.id, secret, packet->path, packet->path_len,
+                                                PAYLOAD_TYPE_ACK, (uint8_t *) &ack_hash, 4);
+        if (path) sendFlood(path);
+      } else {
+        mesh::Packet* ack = createAck(ack_hash);
+        if (ack) {
+          if (from.out_path_len < 0) {
+            sendFlood(ack);
+          } else {
+            sendDirect(ack, from.out_path, from.out_path_len);
+          }
+        }
+      }
     } else {
       MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported message type: %u", (uint32_t) flags);
     }

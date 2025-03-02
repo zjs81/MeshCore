@@ -438,13 +438,16 @@ protected:
     return false;
   }
 
-  void queueMessage(const ContactInfo& from, uint8_t txt_type, uint8_t path_len, uint32_t sender_timestamp, const char *text) {
+  void queueMessage(const ContactInfo& from, uint8_t txt_type, uint8_t path_len, uint32_t sender_timestamp, const uint8_t* extra, int extra_len, const char *text) {
     int i = 0;
     out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV;
     memcpy(&out_frame[i], from.id.pub_key, 6); i += 6;  // just 6-byte prefix
     out_frame[i++] = path_len;
     out_frame[i++] = txt_type;
     memcpy(&out_frame[i], &sender_timestamp, 4); i += 4;
+    if (extra_len > 0) {
+      memcpy(&out_frame[i], extra, extra_len); i += extra_len;
+    }
     int tlen = strlen(text);   // TODO: UTF-8 ??
     if (i + tlen > MAX_FRAME_SIZE) {
       tlen = MAX_FRAME_SIZE - i;
@@ -462,11 +465,16 @@ protected:
   }
 
   void onMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
-    queueMessage(from, TXT_TYPE_PLAIN, path_len, sender_timestamp, text);
+    queueMessage(from, TXT_TYPE_PLAIN, path_len, sender_timestamp, NULL, 0, text);
   }
 
   void onCommandDataRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const char *text) override {
-    queueMessage(from, TXT_TYPE_CLI_DATA, path_len, sender_timestamp, text);
+    queueMessage(from, TXT_TYPE_CLI_DATA, path_len, sender_timestamp, NULL, 0, text);
+  }
+
+  void onSignedMessageRecv(const ContactInfo& from, uint8_t path_len, uint32_t sender_timestamp, const uint8_t *sender_prefix, const char *text) override {
+    saveContacts();   // from.sync_since change needs to be persisted
+    queueMessage(from, TXT_TYPE_SIGNED_PLAIN, path_len, sender_timestamp, sender_prefix, 4, text);
   }
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, int in_path_len, uint32_t timestamp, const char *text) override {

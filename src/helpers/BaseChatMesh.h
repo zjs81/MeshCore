@@ -87,6 +87,7 @@ protected:
   virtual void onContactPathUpdated(const ContactInfo& contact) = 0;
   virtual void onMessageRecv(const ContactInfo& contact, uint8_t path_len, uint32_t sender_timestamp, const char *text) = 0;
   virtual void onCommandDataRecv(const ContactInfo& contact, uint8_t path_len, uint32_t sender_timestamp, const char *text) = 0;
+  virtual void onSignedMessageRecv(const ContactInfo& contact, uint8_t path_len, uint32_t sender_timestamp, const uint8_t *sender_prefix, const char *text) = 0;
   virtual uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const = 0;
   virtual uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const = 0;
   virtual void onSendTimeout() = 0;
