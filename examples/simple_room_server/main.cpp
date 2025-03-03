@@ -372,7 +372,8 @@ protected:
 
       if (!(flags == TXT_TYPE_PLAIN || flags == TXT_TYPE_CLI_DATA)) {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported command flags received: flags=%02x", (uint32_t)flags);
-      } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
+      } else if (sender_timestamp >= client->last_timestamp) {  // prevent replay attacks, but send Acks for retries
+        bool is_retry = (sender_timestamp == client->last_timestamp);
         client->last_timestamp = sender_timestamp;
 
         uint32_t now = getRTCClock()->getCurrentTimeUnique();
@@ -389,19 +390,26 @@ protected:
         bool send_ack;
         if (flags == TXT_TYPE_CLI_DATA) {
           if (client->is_admin) {
-            _cli.handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
-            temp[4] = (TXT_TYPE_CLI_DATA << 2);  // attempt and flags,  (NOTE: legacy was: TXT_TYPE_PLAIN)
-            send_ack = true;
+            if (is_retry) {
+              temp[5] = 0;  // no reply
+            } else {
+              _cli.handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+              temp[4] = (TXT_TYPE_CLI_DATA << 2);  // attempt and flags,  (NOTE: legacy was: TXT_TYPE_PLAIN)
+            }
+            send_ack = false;
           } else {
             temp[5] = 0;  // no reply
             send_ack = false;  // and no ACK...  user shoudn't be sending these
           }
         } else {   // TXT_TYPE_PLAIN
-          addPost(client, (const char *) &data[5]);
+          if (!is_retry) {
+            addPost(client, (const char *) &data[5]);
+          }
           temp[5] = 0;  // no reply (ACK is enough)
           send_ack = true;
         }
 
+        uint32_t delay_millis;
         if (send_ack) {
           mesh::Packet* ack = createAck(ack_hash);
           if (ack) {
@@ -411,6 +419,9 @@ protected:
               sendDirect(ack, client->out_path, client->out_path_len);
             }
           }
+          delay_millis = REPLY_DELAY_MILLIS;
+        } else {
+          delay_millis = 0;
         }
 
         int text_len = strlen((char *) &temp[5]);
@@ -427,9 +438,9 @@ protected:
           auto reply = createDatagram(PAYLOAD_TYPE_TXT_MSG, client->id, secret, temp, 5 + text_len);
           if (reply) {
             if (client->out_path_len < 0) {
-              sendFlood(reply, REPLY_DELAY_MILLIS);
+              sendFlood(reply, delay_millis);
             } else {
-              sendDirect(reply, client->out_path, client->out_path_len, REPLY_DELAY_MILLIS);
+              sendDirect(reply, client->out_path, client->out_path_len, delay_millis);
             }
           }
         }

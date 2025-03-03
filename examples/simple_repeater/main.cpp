@@ -407,27 +407,34 @@ protected:
 
       if (!(flags == TXT_TYPE_PLAIN || flags == TXT_TYPE_CLI_DATA)) {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported text type received: flags=%02x", (uint32_t)flags);
-      } else if (sender_timestamp > client->last_timestamp) {  // prevent replay attacks 
+      } else if (sender_timestamp >= client->last_timestamp) {  // prevent replay attacks 
+        bool is_retry = (sender_timestamp == client->last_timestamp);
         client->last_timestamp = sender_timestamp;
         client->last_activity = getRTCClock()->getCurrentTime();
 
         // len can be > original length, but 'text' will be padded with zeroes
         data[len] = 0; // need to make a C string again, with null terminator
 
-        uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
-        mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 5 + strlen((char *)&data[5]), client->id.pub_key, PUB_KEY_SIZE);
+        if (flags == TXT_TYPE_PLAIN) {  // for legacy CLI, send Acks
+          uint32_t ack_hash;    // calc truncated hash of the message timestamp + text + sender pub_key, to prove to sender that we got it
+          mesh::Utils::sha256((uint8_t *) &ack_hash, 4, data, 5 + strlen((char *)&data[5]), client->id.pub_key, PUB_KEY_SIZE);
 
-        mesh::Packet* ack = createAck(ack_hash);
-        if (ack) {
-          if (client->out_path_len < 0) {
-            sendFlood(ack);
-          } else {
-            sendDirect(ack, client->out_path, client->out_path_len);
+          mesh::Packet* ack = createAck(ack_hash);
+          if (ack) {
+            if (client->out_path_len < 0) {
+              sendFlood(ack);
+            } else {
+              sendDirect(ack, client->out_path, client->out_path_len);
+            }
           }
         }
 
         uint8_t temp[166];
-        _cli.handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+        if (is_retry) {
+          temp[0] = 0;
+        } else {
+          _cli.handleCommand(sender_timestamp, (const char *) &data[5], (char *) &temp[5]);
+        }
         int text_len = strlen((char *) &temp[5]);
         if (text_len > 0) {
           uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
@@ -437,9 +444,6 @@ protected:
           }
           memcpy(temp, &timestamp, 4);   // mostly an extra blob to help make packet_hash unique
           temp[4] = (TXT_TYPE_CLI_DATA << 2);   // NOTE: legacy was: TXT_TYPE_PLAIN
-
-          // calc expected ACK reply
-          //mesh::Utils::sha256((uint8_t *)&expected_ack_crc, 4, temp, 5 + text_len, self_id.pub_key, PUB_KEY_SIZE);
 
           auto reply = createDatagram(PAYLOAD_TYPE_TXT_MSG, client->id, secret, temp, 5 + text_len);
           if (reply) {
