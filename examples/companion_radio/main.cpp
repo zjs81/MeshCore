@@ -96,8 +96,15 @@ static uint32_t _atoi(const char* sp) {
 
 /*------------ Frame Protocol --------------*/
 
-#define FIRMWARE_VER_CODE    1
-#define FIRMWARE_BUILD_DATE   "19 Feb 2025"
+#define FIRMWARE_VER_CODE    2
+
+#ifndef FIRMWARE_BUILD_DATE
+  #define FIRMWARE_BUILD_DATE   "3 Mar 2025"
+#endif
+
+#ifndef FIRMWARE_VERSION
+  #define FIRMWARE_VERSION   "v1.0.0"
+#endif
 
 #define CMD_APP_START              1
 #define CMD_SEND_TXT_MSG           2
@@ -656,11 +663,9 @@ public:
       out_frame[i++] = FIRMWARE_VER_CODE;
       memset(&out_frame[i], 0, 6); i += 6;  // reserved
       memset(&out_frame[i], 0, 12);
-      strcpy((char *) &out_frame[i], FIRMWARE_BUILD_DATE);
-      i += 12;
-      const char* name = board.getManufacturerName();
-      int tlen = strlen(name);
-      memcpy(&out_frame[i], name, tlen); i += tlen;
+      strcpy((char *) &out_frame[i], FIRMWARE_BUILD_DATE); i += 12;
+      StrHelper::strzcpy((char *) &out_frame[i], board.getManufacturerName(), 40); i += 40;
+      StrHelper::strzcpy((char *) &out_frame[i], FIRMWARE_VERSION, 20); i += 20;
       _serial->writeFrame(out_frame, i);
     } else if (cmd_frame[0] == CMD_APP_START && len >= 8) {   // sent when app establishes connection, respond with node ID
       //  cmd_frame[1..7]  reserved future
