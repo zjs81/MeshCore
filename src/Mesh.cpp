@@ -270,13 +270,20 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
 }
 
 DispatcherAction Mesh::routeRecvPacket(Packet* packet) {
+  if (!packet) return ACTION_RELEASE;
+  
   if (packet->isRouteFlood() && !packet->isMarkedDoNotRetransmit()
     && packet->path_len + PATH_HASH_SIZE <= MAX_PATH_SIZE && allowPacketForward(packet)) {
+    
+    // Extract timestamps from forwarded packets for sync
+    if (shouldProcessForwardedTimestamp()) {
+      processForwardedPacketTimestamp(packet);
+    }
+    
     // append this node's hash to 'path'
     packet->path_len += self_id.copyHashTo(&packet->path[packet->path_len]);
 
     uint32_t d = getRetransmitDelay(packet);
-    // as this propagates outwards, give it lower and lower priority
     return ACTION_RETRANSMIT_DELAYED(packet->path_len, d);   // give priority to closer sources, than ones further away
   }
   return ACTION_RELEASE;

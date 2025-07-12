@@ -16,6 +16,7 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/CommonCLI.h>
+#include <helpers/AutoTimeSync.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -134,6 +135,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   NeighbourInfo neighbours[MAX_NEIGHBOURS];
 #endif
   CayenneLPP telemetry;
+  mesh::AutoTimeSync auto_time_sync;
 
   ClientInfo* putClient(const mesh::Identity& id) {
     uint32_t min_time = 0xFFFFFFFF;
@@ -249,9 +251,73 @@ protected:
   }
 
   bool allowPacketForward(const mesh::Packet* packet) override {
-    if (_prefs.disable_fwd) return false;
+    // don't forward packets if path is too long
     if (packet->isRouteFlood() && packet->path_len >= _prefs.flood_max) return false;
     return true;
+  }
+  
+  bool shouldProcessForwardedTimestamp() override {
+    if (!_prefs.auto_time_sync) return false;  // AutoTimeSync disabled
+    
+    uint32_t current_time = getRTCClock()->getCurrentTime();
+    uint32_t last_sync_time = 0;
+    
+    // Get last sync time from AutoTimeSync
+    int total_samples, recent_samples;
+    bool clock_is_set;
+    uint32_t forwarded_count;  // Not used here but required by API
+    auto_time_sync.getDetailedStats(total_samples, recent_samples, last_sync_time, clock_is_set, forwarded_count);
+    
+    // Process forwarded timestamps if we haven't synced yet or it's been too long
+    if (last_sync_time == 0) {
+      return true;  // Never synced, need all the samples we can get
+    }
+    
+    const uint32_t RESYNC_INTERVAL = 86400;  // 24 hours in seconds
+    
+    // Avoid overflow when checking resync time
+    if (last_sync_time > UINT32_MAX - RESYNC_INTERVAL) {
+      return false;  // Very recent sync time near overflow, don't resync
+    }
+    
+    if (current_time >= last_sync_time + RESYNC_INTERVAL) {
+      return true;  // Been too long since last sync
+    }
+    
+    return false;  // Recent sync, don't process forwarded timestamps
+  }
+  
+  void processForwardedPacketTimestamp(mesh::Packet* packet) override {
+    if (!packet) return;
+    
+    // Extract timestamp from packet payload
+    uint32_t timestamp = 0;
+    uint8_t sender_hash = 0;
+    bool has_timestamp = false;
+    
+    // Only process ADVERT packets which have plaintext timestamps
+    if (packet->getPayloadType() == PAYLOAD_TYPE_ADVERT) {
+      if (packet->payload_len >= PUB_KEY_SIZE + 4) {
+        memcpy(&timestamp, &packet->payload[PUB_KEY_SIZE], 4);
+        sender_hash = packet->payload[0];  // First byte of sender's public key
+        has_timestamp = true;
+      }
+    }
+    
+    if (has_timestamp) {
+      // Calculate transmission delay
+      uint32_t packet_len = packet->getRawLength();
+      uint32_t airtime_ms = _radio->getEstAirtimeFor(packet_len);
+      uint32_t estimated_delay_ms = mesh::AutoTimeSync::calculateTransmissionDelay(packet->path_len, airtime_ms);
+      
+      // Process the timestamp
+      auto_time_sync.processForwardedSample(timestamp, packet->path_len, sender_hash, estimated_delay_ms);
+      
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("AutoTimeSync: Processed forwarded timestamp from %02X, hops=%d, type=%d", 
+                         sender_hash, packet->path_len, packet->getPayloadType());
+#endif
+    }
   }
 
   const char* getLogDateTime() override {
@@ -344,6 +410,12 @@ protected:
     if (packet->getPayloadType() == PAYLOAD_TYPE_ANON_REQ) {  // received an initial request by a possible admin client (unknown at this stage)
       uint32_t timestamp;
       memcpy(&timestamp, data, 4);
+      
+      // Process timestamp for auto time sync (anonymous requests are usually from apps with good time)
+      uint32_t packet_len = packet->getRawLength();
+      uint32_t airtime_ms = _radio->getEstAirtimeFor(packet_len);
+      uint32_t estimated_delay_ms = mesh::AutoTimeSync::calculateTransmissionDelay(packet->path_len, airtime_ms);
+      auto_time_sync.processSample(timestamp, packet->path_len, sender.pub_key[0], estimated_delay_ms);
 
       bool is_admin;
       data[len] = 0;  // ensure null terminator
@@ -425,12 +497,42 @@ protected:
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) {
     mesh::Mesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);  // chain to super impl
 
+    // Process timestamp for auto time sync
+    uint32_t packet_len = packet->getRawLength();
+    uint32_t airtime_ms = _radio->getEstAirtimeFor(packet_len);
+    uint32_t estimated_delay_ms = mesh::AutoTimeSync::calculateTransmissionDelay(packet->path_len, airtime_ms);
+    auto_time_sync.processSample(timestamp, packet->path_len, id.pub_key[0], estimated_delay_ms);
+
     // if this a zero hop advert, add it to neighbours
     if (packet->path_len == 0) {
       AdvertDataParser parser(app_data, app_data_len);
       if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) {   // just keep neigbouring Repeaters
         putNeighbour(id, timestamp, packet->getSNR());
       }
+    }
+  }
+
+  void onGroupDataRecv(mesh::Packet* packet, uint8_t type, const mesh::GroupChannel& channel, uint8_t* data, size_t len) override {
+    // Extract timestamp from group messages for auto time sync
+    // Only process if we need more samples (never synced or been too long since last sync)
+    if (len >= 4 && shouldProcessForwardedTimestamp()) {
+      uint32_t timestamp;
+      memcpy(&timestamp, data, 4);
+      
+      // Process timestamp for auto time sync
+      uint32_t packet_len = packet->getRawLength();
+      uint32_t airtime_ms = _radio->getEstAirtimeFor(packet_len);
+      uint32_t estimated_delay_ms = mesh::AutoTimeSync::calculateTransmissionDelay(packet->path_len, airtime_ms);
+      
+      // For group messages, we don't know the sender identity
+      // Use channel hash as sender ID (will keep most recent timestamp per channel)
+      uint8_t channel_sender = channel.hash[0];
+      auto_time_sync.processSample(timestamp, packet->path_len, channel_sender, estimated_delay_ms);
+      
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("AutoTimeSync: Processed group message timestamp from channel %02X, hops=%d, type=%d", 
+                         channel.hash[0], packet->path_len, type);
+#endif
     }
   }
 
@@ -444,6 +546,12 @@ protected:
     if (type == PAYLOAD_TYPE_REQ) {  // request (from a Known admin client!)
       uint32_t timestamp;
       memcpy(&timestamp, data, 4);
+      
+      // Process timestamp for auto time sync
+      uint32_t packet_len = packet->getRawLength();
+      uint32_t airtime_ms = _radio->getEstAirtimeFor(packet_len);
+      uint32_t estimated_delay_ms = mesh::AutoTimeSync::calculateTransmissionDelay(packet->path_len, airtime_ms);
+      auto_time_sync.processSample(timestamp, packet->path_len, client->id.pub_key[0], estimated_delay_ms);
 
       if (timestamp > client->last_timestamp) {  // prevent replay attacks
         int reply_len = handleRequest(client, timestamp, &data[4], len - 4);
@@ -474,6 +582,12 @@ protected:
       uint32_t sender_timestamp;
       memcpy(&sender_timestamp, data, 4);  // timestamp (by sender's RTC clock - which could be wrong)
       uint flags = (data[4] >> 2);   // message attempt number, and other flags
+      
+      // Process timestamp for auto time sync
+      uint32_t packet_len = packet->getRawLength();
+      uint32_t airtime_ms = _radio->getEstAirtimeFor(packet_len);
+      uint32_t estimated_delay_ms = mesh::AutoTimeSync::calculateTransmissionDelay(packet->path_len, airtime_ms);
+      auto_time_sync.processSample(sender_timestamp, packet->path_len, client->id.pub_key[0], estimated_delay_ms);
 
       if (!(flags == TXT_TYPE_PLAIN || flags == TXT_TYPE_CLI_DATA)) {
         MESH_DEBUG_PRINTLN("onPeerDataRecv: unsupported text type received: flags=%02x", (uint32_t)flags);
@@ -551,7 +665,7 @@ protected:
 public:
   MyMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables),
-      _cli(board, rtc, &_prefs, this), telemetry(MAX_PACKET_PAYLOAD - 4)
+      _cli(board, rtc, &_prefs, this), telemetry(MAX_PACKET_PAYLOAD - 4), auto_time_sync(&rtc)
   {
     memset(known_clients, 0, sizeof(known_clients));
     next_local_advert = next_flood_advert = 0;
@@ -579,6 +693,10 @@ public:
     _prefs.flood_advert_interval = 3;   // 3 hours
     _prefs.flood_max = 64;
     _prefs.interference_threshold = 0;  // disabled
+    _prefs.auto_time_sync = 1;          // enabled by default
+    _prefs.time_sync_max_hops = 1;      // only direct neighbors
+    _prefs.time_sync_min_samples = 3;   // need 3 consistent samples
+    _prefs.time_sync_max_drift = 3600;  // max 1 hour drift
   }
 
   void begin(FILESYSTEM* fs) {
@@ -589,6 +707,10 @@ public:
 
     radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
     radio_set_tx_power(_prefs.tx_power_dbm);
+    
+    // Configure auto time sync
+    auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                            _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
 
     updateAdvertTimer();
     updateFloodAdvertTimer();
@@ -604,6 +726,10 @@ public:
 
   void savePrefs() override {
     _cli.savePrefs(_fs);
+    
+    // Apply configuration changes to AutoTimeSync
+    auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                            _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
   }
 
   bool formatFileSystem() override {
@@ -712,8 +838,32 @@ public:
       reply += 3;
       command += 3;
     }
-
-    _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
+    
+    if (memcmp(command, "get auto.time.sync.status", 25) == 0) {
+      int total_samples, recent_samples;
+      uint32_t last_sync, forwarded_count;
+      bool clock_is_set;
+      auto_time_sync.getDetailedStats(total_samples, recent_samples, last_sync, clock_is_set, forwarded_count);
+      int unique_sources = auto_time_sync.getUniqueSources();
+      
+      // Safe buffer handling for CLI reply
+      const int REPLY_BUFFER_SIZE = 120;
+      int written = snprintf(reply, REPLY_BUFFER_SIZE, "> samples: %d/%d recent (7h), sources: %d, forwarded: %u, last sync: %u, clock set: %s", 
+                            recent_samples, total_samples, unique_sources, forwarded_count, last_sync, clock_is_set ? "yes" : "no");
+      
+      // Handle string truncation
+      if (written >= REPLY_BUFFER_SIZE || written < 0) {
+        reply[REPLY_BUFFER_SIZE - 4] = '.';
+        reply[REPLY_BUFFER_SIZE - 3] = '.';
+        reply[REPLY_BUFFER_SIZE - 2] = '.';
+        reply[REPLY_BUFFER_SIZE - 1] = '\0';
+      }
+    } else if (memcmp(command, "auto.time.sync.reset", 20) == 0) {
+      auto_time_sync.resetForResync();
+      strcpy(reply, "OK - AutoTimeSync reset, will attempt fresh sync");
+    } else {
+      _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
+    }
   }
 
   void loop() {

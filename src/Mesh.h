@@ -122,6 +122,20 @@ protected:
    * \brief  A packet with PAYLOAD_TYPE_RAW_CUSTOM has been received.
   */
   virtual void onRawDataRecv(Packet* packet) { }
+  
+  /**
+   * \brief  Check if forwarded packet timestamps should be processed.
+   *         Called during packet forwarding to determine if we need more time samples.
+   * \returns  true if forwarded timestamps should be processed for time sync
+   */
+  virtual bool shouldProcessForwardedTimestamp() { return false; }
+  
+  /**
+   * \brief  Process timestamp from a forwarded packet for time synchronization.
+   *         Called when packet is being forwarded and we need more time samples.
+   * \param  packet  the packet being forwarded
+   */
+  virtual void processForwardedPacketTimestamp(Packet* packet) { }
 
   /**
    * \brief  Perform search of local DB of matching GroupChannels.

@@ -218,6 +218,14 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         mesh::Utils::toHex(&reply[2], _callbacks->getSelfIdPubKey(), PUB_KEY_SIZE);
       } else if (memcmp(config, "role", 4) == 0) {
         sprintf(reply, "> %s", _callbacks->getRole());
+      } else if (memcmp(config, "auto.time.sync", 14) == 0) {
+        sprintf(reply, "> %s", _prefs->auto_time_sync ? "on" : "off");
+      } else if (memcmp(config, "time.sync.max.hops", 18) == 0) {
+        sprintf(reply, "> %d", (uint32_t)_prefs->time_sync_max_hops);
+      } else if (memcmp(config, "time.sync.min.samples", 21) == 0) {
+        sprintf(reply, "> %d", (uint32_t)_prefs->time_sync_min_samples);
+      } else if (memcmp(config, "time.sync.max.drift", 19) == 0) {
+        sprintf(reply, "> %d", (uint32_t)_prefs->time_sync_max_drift);
       } else {
         sprintf(reply, "??: %s", config);
       }
@@ -342,6 +350,37 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         _prefs->freq = atof(&config[5]);
         savePrefs();
         strcpy(reply, "OK - reboot to apply");
+      } else if (memcmp(config, "auto.time.sync ", 15) == 0) {
+        _prefs->auto_time_sync = memcmp(&config[15], "on", 2) == 0;
+        savePrefs();
+        strcpy(reply, _prefs->auto_time_sync ? "OK - auto time sync ON" : "OK - auto time sync OFF");
+      } else if (memcmp(config, "time.sync.max.hops ", 19) == 0) {
+        uint8_t hops = atoi(&config[19]);
+        if (hops >= 1 && hops <= 8) {
+          _prefs->time_sync_max_hops = hops;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: hops must be 1-8");
+        }
+      } else if (memcmp(config, "time.sync.min.samples ", 22) == 0) {
+        uint8_t samples = atoi(&config[22]);
+        if (samples >= 2 && samples <= 8) {  // MAX_SAMPLES is 8
+          _prefs->time_sync_min_samples = samples;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: samples must be 2-8");
+        }
+      } else if (memcmp(config, "time.sync.max.drift ", 20) == 0) {
+        uint32_t drift = atoi(&config[20]);
+        if (drift >= 60 && drift <= 86400) {
+          _prefs->time_sync_max_drift = drift;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: drift must be 60-86400 seconds");
+        }
       } else {
         sprintf(reply, "unknown config: %s", config);
       }

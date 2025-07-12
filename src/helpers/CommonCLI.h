@@ -26,6 +26,10 @@ struct NodePrefs {  // persisted to file
     uint8_t flood_max;
     uint8_t interference_threshold;
     uint8_t agc_reset_interval;   // secs / 4
+    uint8_t auto_time_sync;       // enable/disable automatic time sync
+    uint8_t time_sync_max_hops;   // max hops to accept time from (default: 6)
+    uint8_t time_sync_min_samples; // min consistent samples before sync (default: 3)
+    uint16_t time_sync_max_drift;  // max allowed time drift in seconds (default: 3600)
 };
 
 class CommonCLICallbacks {
