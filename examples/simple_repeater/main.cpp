@@ -251,7 +251,7 @@ protected:
   }
 
   bool allowPacketForward(const mesh::Packet* packet) override {
-    // don't forward packets if path is too long
+    if (_prefs.disable_fwd) return false;
     if (packet->isRouteFlood() && packet->path_len >= _prefs.flood_max) return false;
     return true;
   }
