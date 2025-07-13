@@ -30,6 +30,12 @@ struct NodePrefs {  // persisted to file
     uint8_t time_sync_max_hops;   // max hops to accept time from (default: 6)
     uint8_t time_sync_min_samples; // min consistent samples before sync (default: 3)
     uint16_t time_sync_max_drift;  // max allowed time drift in seconds (default: 3600)
+    uint8_t time_req_pool_size;   // pool size for time requests (default: 0 = auto)
+    uint16_t time_req_slew_limit; // slew rate limit in seconds (default: 5)
+    uint8_t time_req_min_samples; // min samples for time requests (default: 3)
+    float time_sync_alpha;        // smoothing factor for drift rate (default: 0.1)
+    float time_sync_max_drift_rate; // maximum drift rate in s/s (default: 0.01)
+    float time_sync_tolerance;    // tolerance for plausibility check in seconds (default: 5.0)
 };
 
 class CommonCLICallbacks {

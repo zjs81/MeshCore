@@ -5,6 +5,35 @@
 
 namespace mesh {
 
+// Magic numbers for time sync packets
+#define TIME_REQ_MAGIC   0x54494D45  // "TIME"
+#define TIME_REPLY_MAGIC 0x544D5052  // "TMPR"
+
+// Constants for drift calculation
+#define MAX_DRIFT_RATE 0.01f         // Maximum drift rate (s/s)
+#define DEFAULT_DRIFT_ALPHA 0.1f     // Default smoothing factor
+#define DEFAULT_DRIFT_TOLERANCE 5.0f // Default tolerance for plausibility check (seconds)
+
+/**
+ * Time request packet structure
+ */
+struct TimeReq {
+  uint32_t magic;      // TIME_REQ_MAGIC
+  uint32_t nonce;      // Random nonce for replay protection
+  uint8_t  pool_size;  // Expected number of responders
+};
+
+/**
+ * Time reply packet structure
+ */
+struct TimeReply {
+  uint32_t magic;      // TIME_REPLY_MAGIC
+  uint32_t nonce;      // Echo of request nonce
+  uint32_t timestamp;  // Current timestamp
+  uint8_t  hop_count;  // Number of hops this packet has traveled
+  uint8_t  mac;        // 8-bit HMAC: first byte of HMAC-SHA256(shared_key, nonce||timestamp)
+};
+
 /**
  * Time synchronization for mesh nodes.
  * Collects timestamped samples and syncs when enough agree.
@@ -41,6 +70,19 @@ private:
   uint32_t last_sync_time;
   uint32_t forwarded_samples_count;  // Count of forwarded samples processed
   
+  // New fields for randomized handshake
+  uint32_t last_nonce;              // Last nonce used for requests
+  uint32_t max_slew;                // Maximum slew rate limit (seconds)
+  uint8_t time_req_pool_size;       // Pool size for time requests
+  uint8_t time_req_min_samples;     // Minimum samples for time requests
+  
+  // Drift calculation state variables
+  float drift_rate;                 // Current drift rate (s/s)
+  uint32_t last_sync_rtc;           // Last RTC time when sync occurred
+  float drift_alpha;                // Smoothing factor for drift rate
+  float drift_tolerance;            // Tolerance for plausibility check (seconds)
+  float max_drift_rate;             // Maximum allowed drift rate (s/s)
+  
   // Internal functions
   bool isValidTimestamp(uint32_t timestamp, uint32_t current_time, uint32_t max_drift_param) const;
   uint32_t calculateConsensusTime() const;
@@ -50,13 +92,23 @@ private:
   uint32_t calculateTolerance(uint32_t sample_age) const;
   bool isValidSampleIndex(int index) const;
   
+  // Drift calculation methods
+  bool performPlausibilityCheck(uint32_t candidate_time, uint32_t rtc_now) const;
+  void updateDriftRate(uint32_t consensus_time, uint32_t rtc_now);
+  
   // Utilities
   static void insertionSort(uint32_t arr[], int n);
   int findExistingSample(uint8_t sender_hash) const;
   
+  // New time request/reply methods  
+  bool verifyReplyMAC(const TimeReply& reply, uint8_t sender_hash) const;
+  
 public:
   explicit AutoTimeSync(RTCClock* rtc) 
-    : _rtc(rtc), sample_count(0), last_sync_time(0), forwarded_samples_count(0) {
+    : _rtc(rtc), sample_count(0), last_sync_time(0), forwarded_samples_count(0), 
+      last_nonce(0), max_slew(5), time_req_pool_size(0), time_req_min_samples(3),
+      drift_rate(0.0f), last_sync_rtc(0), drift_alpha(DEFAULT_DRIFT_ALPHA), 
+      drift_tolerance(DEFAULT_DRIFT_TOLERANCE), max_drift_rate(MAX_DRIFT_RATE) {
     if (!_rtc) {
       enabled = false;
       max_hops = 0;
@@ -137,6 +189,8 @@ public:
     last_sync_time = 0;
     sample_count = 0;
     forwarded_samples_count = 0;
+    drift_rate = 0.0f;
+    last_sync_rtc = 0;
     memset(samples, 0, sizeof(samples));
     
 #if MESH_DEBUG
@@ -146,6 +200,43 @@ public:
   
   // Get number of unique sources
   int getUniqueSources() const;
+  
+  // New configuration methods
+  void configureTimeRequest(uint8_t pool_size, uint32_t slew_limit_secs, uint8_t min_samples_req) {
+    time_req_pool_size = pool_size;
+    max_slew = (slew_limit_secs > 0) ? slew_limit_secs : 5;
+    time_req_min_samples = (min_samples_req > 0 && min_samples_req <= MAX_SAMPLES) ? min_samples_req : 3;
+  }
+  
+  // Configure drift calculation parameters
+  void configureDriftCalculation(float alpha, float tolerance, float max_drift_rate_param = MAX_DRIFT_RATE) {
+    drift_alpha = (alpha > 0.0f && alpha <= 1.0f) ? alpha : DEFAULT_DRIFT_ALPHA;
+    drift_tolerance = (tolerance > 0.0f) ? tolerance : DEFAULT_DRIFT_TOLERANCE;
+    max_drift_rate = (max_drift_rate_param > 0.0f) ? max_drift_rate_param : MAX_DRIFT_RATE;
+  }
+  
+  // Generate and return a time request packet
+  TimeReq generateTimeRequest(uint8_t pool_size = 0);
+  
+  // Process received time request packet
+  bool processTimeRequest(const TimeReq& req, uint8_t sender_hash);
+  
+  // Process received time reply packet
+  bool processTimeReply(const TimeReply& reply, uint8_t sender_hash);
+  
+  // Get configuration values
+  uint8_t getTimeReqPoolSize() const { return time_req_pool_size; }
+  uint32_t getMaxSlew() const { return max_slew; }
+  uint8_t getTimeReqMinSamples() const { return time_req_min_samples; }
+  
+  // Get drift statistics
+  float getDriftRate() const { return drift_rate; }
+  float getDriftAlpha() const { return drift_alpha; }
+  float getDriftTolerance() const { return drift_tolerance; }
+  float getMaxDriftRate() const { return max_drift_rate; }
+  
+  // MAC calculation (needs to be public for mesh processing)
+  uint8_t calculateReplyMAC(uint32_t nonce, uint32_t timestamp, uint8_t sender_hash) const;
 };
 
 } 

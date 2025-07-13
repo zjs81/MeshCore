@@ -2,6 +2,7 @@
 #include "CommonCLI.h"
 #include "TxtDataHelpers.h"
 #include <RTClib.h>
+#include "AutoTimeSync.h"
 
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
@@ -71,6 +72,17 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     _prefs->tx_power_dbm = constrain(_prefs->tx_power_dbm, 1, 30);
 
     file.close();
+  }
+  
+  // Set default values for drift calculation parameters if they weren't loaded from file
+  if (_prefs->time_sync_alpha == 0.0f) {
+    _prefs->time_sync_alpha = DEFAULT_DRIFT_ALPHA;
+  }
+  if (_prefs->time_sync_max_drift_rate == 0.0f) {
+    _prefs->time_sync_max_drift_rate = MAX_DRIFT_RATE;
+  }
+  if (_prefs->time_sync_tolerance == 0.0f) {
+    _prefs->time_sync_tolerance = DEFAULT_DRIFT_TOLERANCE;
   }
 }
 
@@ -226,6 +238,18 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         sprintf(reply, "> %d", (uint32_t)_prefs->time_sync_min_samples);
       } else if (memcmp(config, "time.sync.max.drift", 19) == 0) {
         sprintf(reply, "> %d", (uint32_t)_prefs->time_sync_max_drift);
+      } else if (memcmp(config, "time.req.pool.size", 18) == 0) {
+        sprintf(reply, "> %d", (uint32_t)_prefs->time_req_pool_size);
+      } else if (memcmp(config, "time.req.slew.limit", 19) == 0) {
+        sprintf(reply, "> %d", (uint32_t)_prefs->time_req_slew_limit);
+      } else if (memcmp(config, "time.req.min.samples", 20) == 0) {
+        sprintf(reply, "> %d", (uint32_t)_prefs->time_req_min_samples);
+      } else if (memcmp(config, "time.sync.alpha", 15) == 0) {
+        sprintf(reply, "> %.3f", _prefs->time_sync_alpha);
+      } else if (memcmp(config, "time.sync.max.drift.rate", 24) == 0) {
+        sprintf(reply, "> %.6f", _prefs->time_sync_max_drift_rate);
+      } else if (memcmp(config, "time.sync.tolerance", 19) == 0) {
+        sprintf(reply, "> %.1f", _prefs->time_sync_tolerance);
       } else {
         sprintf(reply, "??: %s", config);
       }
@@ -380,6 +404,60 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
           strcpy(reply, "OK");
         } else {
           strcpy(reply, "Error: drift must be 60-86400 seconds");
+        }
+      } else if (memcmp(config, "time.req.pool.size ", 19) == 0) {
+        uint8_t pool_size = atoi(&config[19]);
+        if (pool_size <= 64) {
+          _prefs->time_req_pool_size = pool_size;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: pool size must be 0-64");
+        }
+      } else if (memcmp(config, "time.req.slew.limit ", 20) == 0) {
+        uint16_t slew_limit = atoi(&config[20]);
+        if (slew_limit >= 1 && slew_limit <= 3600) {
+          _prefs->time_req_slew_limit = slew_limit;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: slew limit must be 1-3600 seconds");
+        }
+      } else if (memcmp(config, "time.req.min.samples ", 21) == 0) {
+        uint8_t min_samples = atoi(&config[21]);
+        if (min_samples >= 1 && min_samples <= 8) {
+          _prefs->time_req_min_samples = min_samples;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: min samples must be 1-8");
+        }
+      } else if (memcmp(config, "time.sync.alpha ", 16) == 0) {
+        float alpha = atof(&config[16]);
+        if (alpha > 0.0f && alpha <= 1.0f) {
+          _prefs->time_sync_alpha = alpha;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: alpha must be 0.0-1.0");
+        }
+      } else if (memcmp(config, "time.sync.max.drift.rate ", 25) == 0) {
+        float drift_rate = atof(&config[25]);
+        if (drift_rate >= 0.0f && drift_rate <= 0.1f) {
+          _prefs->time_sync_max_drift_rate = drift_rate;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: drift rate must be 0.0-0.1 s/s");
+        }
+      } else if (memcmp(config, "time.sync.tolerance ", 20) == 0) {
+        float tolerance = atof(&config[20]);
+        if (tolerance >= 1.0f && tolerance <= 3600.0f) {
+          _prefs->time_sync_tolerance = tolerance;
+          savePrefs();
+          strcpy(reply, "OK");
+        } else {
+          strcpy(reply, "Error: tolerance must be 1.0-3600.0 seconds");
         }
       } else {
         sprintf(reply, "unknown config: %s", config);

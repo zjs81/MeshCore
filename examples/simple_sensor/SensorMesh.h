@@ -20,6 +20,7 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/CommonCLI.h>
+#include <helpers/AutoTimeSync.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -71,7 +72,7 @@ public:
   const char* getRole() override { return FIRMWARE_ROLE; }
   const char* getNodeName() { return _prefs.node_name; }
   NodePrefs* getNodePrefs() { return &_prefs; }
-  void savePrefs() override { _cli.savePrefs(_fs); }
+  void savePrefs() override;
   bool formatFileSystem() override;
   void sendSelfAdvertisement(int delay_millis) override;
   void updateAdvertTimer() override;
@@ -133,12 +134,16 @@ protected:
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
   bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override;
+  void onTimeRequestRecv(mesh::Packet* packet) override;
+  void onTimeReplyRecv(mesh::Packet* packet) override;
 
 private:
   FILESYSTEM* _fs;
   unsigned long next_local_advert, next_flood_advert;
   NodePrefs _prefs;
   CommonCLI _cli;
+  mesh::AutoTimeSync auto_time_sync;
+  unsigned long next_time_request;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   ContactInfo contacts[MAX_CONTACTS];
   int num_contacts;
@@ -158,5 +163,6 @@ private:
   void applyContactPermissions(const uint8_t* pubkey, uint16_t perms);
 
   void sendAlert(ContactInfo* c, Trigger* t);
+  void sendTimeRequest();
 
 };

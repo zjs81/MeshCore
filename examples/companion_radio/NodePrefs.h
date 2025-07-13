@@ -24,4 +24,14 @@ struct NodePrefs {  // persisted to file
   float rx_delay_base;
   uint32_t ble_pin;
   uint8_t  advert_loc_policy;
+  uint8_t auto_time_sync;
+  uint8_t time_sync_max_hops;
+  uint8_t time_sync_min_samples;
+  uint16_t time_sync_max_drift;
+  uint8_t time_req_pool_size;
+  uint16_t time_req_slew_limit;
+  uint8_t time_req_min_samples;
+  float time_sync_alpha;
+  float time_sync_max_drift_rate;
+  float time_sync_tolerance;
 };

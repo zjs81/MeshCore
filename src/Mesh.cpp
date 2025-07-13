@@ -254,6 +254,20 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
       }
       break;
     }
+    case PAYLOAD_TYPE_TIME_REQ: {
+      if (!_tables->hasSeen(pkt)) {
+        onTimeRequestRecv(pkt);
+        action = routeRecvPacket(pkt);
+      }
+      break;
+    }
+    case PAYLOAD_TYPE_TIME_REPLY: {
+      if (!_tables->hasSeen(pkt)) {
+        onTimeReplyRecv(pkt);
+        action = routeRecvPacket(pkt);
+      }
+      break;
+    }
     case PAYLOAD_TYPE_RAW_CUSTOM: {
       if (pkt->isRouteDirect() && !_tables->hasSeen(pkt)) {
         onRawDataRecv(pkt);

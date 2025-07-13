@@ -136,6 +136,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
 #endif
   CayenneLPP telemetry;
   mesh::AutoTimeSync auto_time_sync;
+  unsigned long next_time_request;
 
   ClientInfo* putClient(const mesh::Identity& id) {
     uint32_t min_time = 0xFFFFFFFF;
@@ -669,6 +670,7 @@ public:
   {
     memset(known_clients, 0, sizeof(known_clients));
     next_local_advert = next_flood_advert = 0;
+    next_time_request = 0;
     _logging = false;
 
   #if MAX_NEIGHBOURS
@@ -697,6 +699,9 @@ public:
     _prefs.time_sync_max_hops = 1;      // only direct neighbors
     _prefs.time_sync_min_samples = 3;   // need 3 consistent samples
     _prefs.time_sync_max_drift = 3600;  // max 1 hour drift
+    _prefs.time_req_pool_size = 0;      // auto (use current neighbor count)
+    _prefs.time_req_slew_limit = 5;     // 5 seconds slew limit
+    _prefs.time_req_min_samples = 3;    // minimum samples for time requests
   }
 
   void begin(FILESYSTEM* fs) {
@@ -711,9 +716,15 @@ public:
     // Configure auto time sync
     auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
                             _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+    auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                       _prefs.time_req_min_samples);
+    auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, _prefs.time_sync_max_drift_rate);
 
     updateAdvertTimer();
     updateFloodAdvertTimer();
+    
+    // Schedule initial time request (after 5 minutes to allow network setup)
+    next_time_request = futureMillis(300000);
   }
 
   const char* getFirmwareVer() override { return FIRMWARE_VERSION; }
@@ -730,6 +741,9 @@ public:
     // Apply configuration changes to AutoTimeSync
     auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
                             _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+    auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                       _prefs.time_req_min_samples);
+    auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, _prefs.time_sync_max_drift_rate);
   }
 
   bool formatFileSystem() override {
@@ -767,6 +781,44 @@ public:
     } else {
       next_flood_advert = 0;  // stop the timer
     }
+  }
+
+  void sendTimeRequest() {
+    if (!_prefs.auto_time_sync) return;  // Don't send if auto time sync is disabled
+    
+    // Generate time request
+    uint8_t neighbor_count = 0;
+    #if MAX_NEIGHBOURS
+    // Count active neighbors
+    uint32_t current_time = getRTCClock()->getCurrentTime();
+    for (int i = 0; i < MAX_NEIGHBOURS; i++) {
+      if (neighbours[i].heard_timestamp > 0 && 
+          (current_time - neighbours[i].heard_timestamp) < 3600) {  // Active within last hour
+        neighbor_count++;
+      }
+    }
+    #endif
+    
+    // Use neighbor count as pool size, with minimum of 8
+    uint8_t pool_size = (neighbor_count > 0) ? neighbor_count : 8;
+    
+    mesh::TimeReq req = auto_time_sync.generateTimeRequest(pool_size);
+    
+    // Create raw packet for time request
+    mesh::Packet* pkt = createRawData((uint8_t*)&req, sizeof(req));
+    if (pkt) {
+      // Override the packet type to TIME_REQ
+      pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+      pkt->header |= (PAYLOAD_TYPE_TIME_REQ << PH_TYPE_SHIFT);
+      
+      sendFlood(pkt, 100);  // Small delay
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("Sent time request, nonce=%u, pool_size=%u", req.nonce, req.pool_size);
+#endif
+    }
+    
+    // Schedule next request in 24 hours
+    next_time_request = futureMillis(86400000);  // 24 hours in milliseconds
   }
 
   void setLoggingOn(bool enable) override { _logging = enable; }
@@ -830,6 +882,85 @@ public:
     ((SimpleMeshTables *)getTables())->resetStats();
   }
 
+  // Methods for UI display
+  void getTimeSyncStats(int& total_samples, int& recent_samples, uint32_t& last_sync, bool& clock_is_set, uint32_t& forwarded_count) {
+    auto_time_sync.getDetailedStats(total_samples, recent_samples, last_sync, clock_is_set, forwarded_count);
+  }
+
+  uint32_t getCurrentTime() {
+    return getRTCClock()->getCurrentTime();
+  }
+
+  bool isTimeSyncEnabled() {
+    return _prefs.auto_time_sync;
+  }
+
+  void onTimeRequestRecv(mesh::Packet* packet) override {
+    if (packet->payload_len < sizeof(mesh::TimeReq)) {
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("onTimeRequestRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+      return;
+    }
+
+    mesh::TimeReq req;
+    memcpy(&req, packet->payload, sizeof(req));
+
+    // Use sender's public key hash (if available from packet path)
+    uint8_t sender_hash = 0x00;  // Default fallback
+    if (packet->path_len > 0) {
+      sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+    }
+
+    // Process the time request and check if we should respond
+    bool should_respond = auto_time_sync.processTimeRequest(req, sender_hash);
+    
+    if (should_respond) {
+      // Create time reply
+      mesh::TimeReply reply;
+      reply.magic = TIME_REPLY_MAGIC;
+      reply.nonce = req.nonce;
+      reply.timestamp = getRTCClock()->getCurrentTime();
+      reply.hop_count = packet->path_len;
+      reply.mac = auto_time_sync.calculateReplyMAC(reply.nonce, reply.timestamp, sender_hash);
+
+      // Create and send reply packet
+      mesh::Packet* reply_pkt = createRawData((uint8_t*)&reply, sizeof(reply));
+      if (reply_pkt) {
+        // Override the packet type to TIME_REPLY
+        reply_pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+        reply_pkt->header |= (PAYLOAD_TYPE_TIME_REPLY << PH_TYPE_SHIFT);
+        
+        sendFlood(reply_pkt, 50);  // Small delay to avoid collisions
+        
+#if MESH_DEBUG
+        MESH_DEBUG_PRINTLN("Sent time reply, nonce=%u, timestamp=%u", reply.nonce, reply.timestamp);
+#endif
+      }
+    }
+  }
+
+  void onTimeReplyRecv(mesh::Packet* packet) override {
+    if (packet->payload_len < sizeof(mesh::TimeReply)) {
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("onTimeReplyRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+      return;
+    }
+
+    mesh::TimeReply reply;
+    memcpy(&reply, packet->payload, sizeof(reply));
+
+    // Use sender's public key hash (if available from packet path)
+    uint8_t sender_hash = 0x00;  // Default fallback
+    if (packet->path_len > 0) {
+      sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+    }
+
+    // Process the time reply
+    auto_time_sync.processTimeReply(reply, sender_hash);
+  }
+
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply) {
     while (*command == ' ') command++;   // skip leading spaces
 
@@ -880,8 +1011,29 @@ public:
       if (pkt) sendZeroHop(pkt);
 
       updateAdvertTimer();   // schedule next local advert
+    } else if (next_time_request && millisHasNowPassed(next_time_request)) {
+      sendTimeRequest();  // Send time request and schedule next one
     }
   #ifdef DISPLAY_CLASS
+    // Update time sync data for display
+    static unsigned long last_ui_update = 0;
+    if (millis() - last_ui_update > 1000) {  // Update every second
+      int total_samples, recent_samples;
+      uint32_t last_sync;
+      bool clock_is_set;
+      uint32_t forwarded_count;
+      getTimeSyncStats(total_samples, recent_samples, last_sync, clock_is_set, forwarded_count);
+      
+      TimeSyncDisplayData data;
+      data.enabled = isTimeSyncEnabled();
+      data.clock_is_set = clock_is_set;
+      data.recent_samples = recent_samples;
+      data.current_time = getCurrentTime();
+      
+      ui_task.updateTimeSyncData(data);
+      last_ui_update = millis();
+    }
+    
     ui_task.loop();
   #endif
   }

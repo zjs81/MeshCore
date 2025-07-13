@@ -122,6 +122,16 @@ protected:
    * \brief  A packet with PAYLOAD_TYPE_RAW_CUSTOM has been received.
   */
   virtual void onRawDataRecv(Packet* packet) { }
+
+  /**
+   * \brief  A packet with PAYLOAD_TYPE_TIME_REQ has been received.
+  */
+  virtual void onTimeRequestRecv(Packet* packet) { }
+
+  /**
+   * \brief  A packet with PAYLOAD_TYPE_TIME_REPLY has been received.
+  */
+  virtual void onTimeReplyRecv(Packet* packet) { }
   
   /**
    * \brief  Check if forwarded packet timestamps should be processed.

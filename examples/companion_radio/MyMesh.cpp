@@ -561,7 +561,7 @@ void MyMesh::onSendTimeout() {}
 
 MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store)
     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
-      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store) {
+      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), auto_time_sync(&rtc) {
   _iter_started = false;
   _cli_rescue = false;
   offline_queue_len = 0;
@@ -570,6 +570,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
+  next_time_request = 0;
   memset(advert_paths, 0, sizeof(advert_paths));
 
   // defaults
@@ -581,6 +582,16 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.bw = LORA_BW;
   _prefs.cr = LORA_CR;
   _prefs.tx_power_dbm = LORA_TX_POWER;
+  _prefs.auto_time_sync = 1;
+  _prefs.time_sync_max_hops = 6;
+  _prefs.time_sync_min_samples = 3;
+  _prefs.time_sync_max_drift = 3600;
+  _prefs.time_req_pool_size = 0;
+  _prefs.time_req_slew_limit = 5;
+  _prefs.time_req_min_samples = 3;
+  _prefs.time_sync_alpha = 0.1f;
+  _prefs.time_sync_max_drift_rate = 0.01f;
+  _prefs.time_sync_tolerance = 5.0f;
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 }
 
@@ -609,6 +620,14 @@ void MyMesh::begin(bool has_display) {
 
   // load persisted prefs
   _store->loadPrefs(_prefs, sensors.node_lat, sensors.node_lon);
+
+  // Apply AutoTimeSync configuration after loading preferences
+  auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                          _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+  auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                     _prefs.time_req_min_samples);
+  auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, 
+                                         _prefs.time_sync_max_drift_rate);
 
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
@@ -644,6 +663,17 @@ void MyMesh::begin(bool has_display) {
 
   radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_set_tx_power(_prefs.tx_power_dbm);
+
+  // Configure auto time sync
+  auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                          _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+  auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                     _prefs.time_req_min_samples);
+  auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, 
+                                         _prefs.time_sync_max_drift_rate);
+
+  // Schedule initial time request (after 5 minutes to allow network setup)
+  next_time_request = futureMillis(300000);
 }
 
 const char *MyMesh::getNodeName() {
@@ -1487,6 +1517,11 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
+  // Handle time request broadcasting
+  if (next_time_request && millisHasNowPassed(next_time_request)) {
+    sendTimeRequest();
+  }
+
   if (_cli_rescue) {
     checkCLIRescueCmd();
   } else {
@@ -1517,4 +1552,101 @@ bool MyMesh::advert() {
   } else {
     return false;
   }
+}
+
+void MyMesh::sendTimeRequest() {
+  if (!_prefs.auto_time_sync) return;  // Don't send if auto time sync is disabled
+  
+  // Generate time request
+  mesh::TimeReq req = auto_time_sync.generateTimeRequest(8);  // Simple fixed pool size for companion radios
+  
+  // Create raw packet for time request
+  mesh::Packet* pkt = createRawData((uint8_t*)&req, sizeof(req));
+  if (pkt) {
+    // Override the packet type to TIME_REQ
+    pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+    pkt->header |= (PAYLOAD_TYPE_TIME_REQ << PH_TYPE_SHIFT);
+    
+    sendFlood(pkt, 100);  // Small delay
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("Sent time request, nonce=%u, pool_size=%u", req.nonce, req.pool_size);
+#endif
+  }
+  
+  // Schedule next request in 24 hours
+  next_time_request = futureMillis(86400000);  // 24 hours in milliseconds
+}
+
+void MyMesh::onTimeRequestRecv(mesh::Packet* packet) {
+  if (packet->payload_len < sizeof(mesh::TimeReq)) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("onTimeRequestRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+    return;
+  }
+
+  mesh::TimeReq req;
+  memcpy(&req, packet->payload, sizeof(req));
+
+  // Use sender's public key hash (if available from packet path)
+  uint8_t sender_hash = 0x00;  // Default fallback
+  if (packet->path_len > 0) {
+    sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+  }
+
+  // Process the time request and check if we should respond
+  bool should_respond = auto_time_sync.processTimeRequest(req, sender_hash);
+  
+  if (should_respond) {
+    // Create time reply
+    mesh::TimeReply reply;
+    reply.magic = TIME_REPLY_MAGIC;
+    reply.nonce = req.nonce;
+    reply.timestamp = getRTCClock()->getCurrentTime();
+    reply.hop_count = packet->path_len;
+    reply.mac = auto_time_sync.calculateReplyMAC(reply.nonce, reply.timestamp, sender_hash);
+
+    // Create and send reply packet
+    mesh::Packet* reply_pkt = createRawData((uint8_t*)&reply, sizeof(reply));
+    if (reply_pkt) {
+      reply_pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+      reply_pkt->header |= (PAYLOAD_TYPE_TIME_REPLY << PH_TYPE_SHIFT);
+      
+      sendPacket(reply_pkt, 200);  // Small delay for reply
+      
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("Sent time reply, nonce=%u, timestamp=%u", reply.nonce, reply.timestamp);
+#endif
+    }
+  }
+}
+
+void MyMesh::onTimeReplyRecv(mesh::Packet* packet) {
+  if (packet->payload_len < sizeof(mesh::TimeReply)) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("onTimeReplyRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+    return;
+  }
+
+  mesh::TimeReply reply;
+  memcpy(&reply, packet->payload, sizeof(reply));
+
+  // Use sender's public key hash (if available from packet path)
+  uint8_t sender_hash = 0x00;  // Default fallback
+  if (packet->path_len > 0) {
+    sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+  }
+
+  // Process the time reply
+  bool processed = auto_time_sync.processTimeReply(reply, sender_hash);
+  
+#if MESH_DEBUG
+  if (processed) {
+    MESH_DEBUG_PRINTLN("Processed time reply from %02X, nonce=%u, timestamp=%u", 
+                       sender_hash, reply.nonce, reply.timestamp);
+  } else {
+    MESH_DEBUG_PRINTLN("Rejected time reply from %02X (invalid MAC or nonce)", sender_hash);
+  }
+#endif
 }

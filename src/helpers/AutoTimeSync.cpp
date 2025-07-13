@@ -191,19 +191,27 @@ bool AutoTimeSync::performSync() {
   const uint32_t consensus_time = calculateConsensusTime();
   if (consensus_time == 0) return false;
   
-  const uint32_t current_time = _rtc->getCurrentTime();
+  const uint32_t rtc_now = _rtc->getCurrentTime();
   
   // Calculate drift
-  const uint32_t abs_drift = (consensus_time >= current_time) ? 
-                            (consensus_time - current_time) : 
-                            (current_time - consensus_time);
-  const int32_t drift = (int32_t)(consensus_time - current_time);
+  const uint32_t abs_drift = (consensus_time >= rtc_now) ? 
+                            (consensus_time - rtc_now) : 
+                            (rtc_now - consensus_time);
+  const int32_t drift = (int32_t)(consensus_time - rtc_now);
   
   // Validate consensus time
-  if (!isValidTimestamp(consensus_time, current_time, max_drift)) {
+  if (!isValidTimestamp(consensus_time, rtc_now, max_drift)) {
 #if MESH_DEBUG
     MESH_DEBUG_PRINTLN("AutoTimeSync: Consensus time failed validation: %u (current: %u, drift: %d)", 
-                       consensus_time, current_time, drift);
+                       consensus_time, rtc_now, drift);
+#endif
+    return false;
+  }
+  
+  // Perform plausibility check if we have prior sync history
+  if (last_sync_rtc != 0 && !performPlausibilityCheck(consensus_time, rtc_now)) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Consensus time failed plausibility check");
 #endif
     return false;
   }
@@ -216,14 +224,39 @@ bool AutoTimeSync::performSync() {
     return false;
   }
   
+  // Monotonicity + slew rate guard
+  if (consensus_time < last_sync_time) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Rejecting backwards time adjustment: %u < %u", consensus_time, last_sync_time);
+#endif
+    return false;  // No backwards time
+  }
+  
+  // Apply slew rate limiting
+  uint32_t target_time = consensus_time;
+  if (abs_drift > max_slew) {
+    if (drift > 0) {
+      target_time = rtc_now + max_slew;
+    } else {
+      target_time = rtc_now - max_slew;
+    }
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Slew rate limiting applied: drift=%d, max_slew=%u, target=%u", 
+                       drift, max_slew, target_time);
+#endif
+  }
+  
+  // Update drift rate calculation
+  updateDriftRate(consensus_time, rtc_now);
+  
   // Apply the time update
-  _rtc->setCurrentTime(consensus_time);
-  last_sync_time = consensus_time;
+  _rtc->setCurrentTime(target_time);
+  last_sync_time = target_time;
   
   // Keep recent samples, remove old ones
   int kept_samples = 0;
   for (int i = 0; i < sample_count; i++) {
-    if (isValidSampleIndex(i) && isRecentSample(samples[i].received_at, consensus_time)) {
+    if (isValidSampleIndex(i) && isRecentSample(samples[i].received_at, target_time)) {
       if (kept_samples != i) {
         samples[kept_samples] = samples[i];
       }
@@ -236,10 +269,11 @@ bool AutoTimeSync::performSync() {
   forwarded_samples_count = 0;
   
 #if MESH_DEBUG
-  if (current_time < MIN_REASONABLE_TIME) {
-    MESH_DEBUG_PRINTLN("AutoTimeSync: Clock synchronized from unset state, set to %u", consensus_time);
+  if (rtc_now < MIN_REASONABLE_TIME) {
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Clock synchronized from unset state, set to %u", target_time);
   } else {
-    MESH_DEBUG_PRINTLN("AutoTimeSync: Clock synchronized, drift was %d seconds", drift);
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Clock synchronized, drift was %d seconds, applied %d seconds, drift_rate=%.6f", 
+                       drift, (int32_t)(target_time - rtc_now), drift_rate);
   }
 #endif
   return true;
@@ -556,6 +590,206 @@ int AutoTimeSync::findExistingSample(uint8_t sender_hash) const {
     }
   }
   return -1;
+}
+
+TimeReq AutoTimeSync::generateTimeRequest(uint8_t pool_size) {
+  if (!_rtc) {
+    TimeReq req = {0};
+    return req;
+  }
+  
+  // Generate a new nonce
+  last_nonce = _rtc->getCurrentTime() + (rand() & 0xFFFF);
+  
+  // Use provided pool size or default to current peer count
+  uint8_t effective_pool_size = (pool_size > 0) ? pool_size : time_req_pool_size;
+  if (effective_pool_size == 0) {
+    effective_pool_size = 8;  // Default fallback
+  }
+  
+  TimeReq req;
+  req.magic = TIME_REQ_MAGIC;
+  req.nonce = last_nonce;
+  req.pool_size = effective_pool_size;
+  
+#if MESH_DEBUG
+  MESH_DEBUG_PRINTLN("AutoTimeSync: Generated time request, nonce=%u, pool_size=%u", last_nonce, effective_pool_size);
+#endif
+  
+  return req;
+}
+
+bool AutoTimeSync::processTimeRequest(const TimeReq& req, uint8_t sender_hash) {
+  if (!_rtc || !enabled) return false;
+  
+  // Validate magic number
+  if (req.magic != TIME_REQ_MAGIC) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Invalid time request magic: %08X", req.magic);
+#endif
+    return false;
+  }
+  
+  // Validate pool size
+  if (req.pool_size == 0 || req.pool_size > 64) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Invalid pool size: %u", req.pool_size);
+#endif
+    return false;
+  }
+  
+  // Random selection: respond with probability pool_size/3 / pool_size = 1/3
+  uint32_t random_val = rand() % req.pool_size;
+  bool should_respond = (random_val < (req.pool_size / 3));
+  
+#if MESH_DEBUG
+  MESH_DEBUG_PRINTLN("AutoTimeSync: Time request from %02X, nonce=%u, pool_size=%u, respond=%s", 
+                     sender_hash, req.nonce, req.pool_size, should_respond ? "YES" : "NO");
+#endif
+  
+  return should_respond;
+}
+
+bool AutoTimeSync::processTimeReply(const TimeReply& reply, uint8_t sender_hash) {
+  if (!_rtc || !enabled) return false;
+  
+  // Validate magic number
+  if (reply.magic != TIME_REPLY_MAGIC) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Invalid time reply magic: %08X", reply.magic);
+#endif
+    return false;
+  }
+  
+  // Validate nonce matches our last request
+  if (reply.nonce != last_nonce) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Time reply nonce mismatch: got %u, expected %u", reply.nonce, last_nonce);
+#endif
+    return false;
+  }
+  
+  // Verify MAC
+  if (!verifyReplyMAC(reply, sender_hash)) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Time reply MAC verification failed");
+#endif
+    return false;
+  }
+  
+  // Process the timestamp (similar to existing processSample)
+  uint32_t current_time = _rtc->getCurrentTime();
+  
+  // Add some estimated delay for processing
+  uint32_t estimated_delay_ms = calculateTransmissionDelay(reply.hop_count, 50);  // Assume 50ms airtime
+  
+  // Process as a normal sample
+  processSample(reply.timestamp, reply.hop_count, sender_hash, estimated_delay_ms);
+  
+#if MESH_DEBUG
+  MESH_DEBUG_PRINTLN("AutoTimeSync: Processed time reply from %02X, timestamp=%u, hops=%u", 
+                     sender_hash, reply.timestamp, reply.hop_count);
+#endif
+  
+  return true;
+}
+
+bool AutoTimeSync::verifyReplyMAC(const TimeReply& reply, uint8_t sender_hash) const {
+  uint8_t expected_mac = calculateReplyMAC(reply.nonce, reply.timestamp, sender_hash);
+  return (reply.mac == expected_mac);
+}
+
+uint8_t AutoTimeSync::calculateReplyMAC(uint32_t nonce, uint32_t timestamp, uint8_t sender_hash) const {
+  // Simple MAC calculation using sender hash as key
+  // In production, this would use a proper shared secret
+  uint8_t data[8];
+  memcpy(&data[0], &nonce, 4);
+  memcpy(&data[4], &timestamp, 4);
+  
+  uint8_t mac = sender_hash;
+  for (int i = 0; i < 8; i++) {
+    mac ^= data[i];
+    mac = (mac << 1) | (mac >> 7);  // Rotate left
+  }
+  
+  return mac;
+}
+
+bool AutoTimeSync::performPlausibilityCheck(uint32_t candidate_time, uint32_t rtc_now) const {
+  if (last_sync_rtc == 0) return true;  // No prior sync data
+  
+  // Calculate time elapsed since last sync
+  uint32_t dt = 0;
+  if (rtc_now >= last_sync_rtc) {
+    dt = rtc_now - last_sync_rtc;
+  } else {
+    // Handle RTC rollover (unlikely but possible)
+    dt = (UINT32_MAX - last_sync_rtc) + rtc_now + 1;
+  }
+  
+  // Predict expected time based on drift rate
+  float predicted_offset = drift_rate * (float)dt;
+  uint32_t predicted_time = rtc_now + (int32_t)predicted_offset;
+  
+  // Check if candidate is within tolerance
+  float deviation = fabsf((float)((int32_t)(candidate_time - predicted_time)));
+  
+  if (deviation > drift_tolerance) {
+#if MESH_DEBUG
+    MESH_DEBUG_PRINTLN("AutoTimeSync: Plausibility check failed: candidate=%u, predicted=%u, deviation=%.1f > %.1f", 
+                       candidate_time, predicted_time, deviation, drift_tolerance);
+#endif
+    return false;
+  }
+  
+#if MESH_DEBUG
+  MESH_DEBUG_PRINTLN("AutoTimeSync: Plausibility check passed: deviation=%.1f <= %.1f", deviation, drift_tolerance);
+#endif
+  return true;
+}
+
+void AutoTimeSync::updateDriftRate(uint32_t consensus_time, uint32_t rtc_now) {
+  // Skip drift calculation for initial sync
+  if (last_sync_rtc == 0) {
+    last_sync_rtc = rtc_now;
+    return;
+  }
+  
+  // Calculate time elapsed since last sync
+  uint32_t dt = 0;
+  if (rtc_now >= last_sync_rtc) {
+    dt = rtc_now - last_sync_rtc;
+  } else {
+    // Handle RTC rollover (unlikely but possible)
+    dt = (UINT32_MAX - last_sync_rtc) + rtc_now + 1;
+  }
+  
+  // Avoid division by zero or very small time intervals
+  if (dt < 60) {  // Minimum 1 minute between measurements
+    return;
+  }
+  
+  // Calculate offset and measured drift rate
+  int32_t offset = (int32_t)(consensus_time - rtc_now);
+  float measured_rate = (float)offset / (float)dt;
+  
+  // Apply exponential smoothing
+  drift_rate = drift_rate * (1.0f - drift_alpha) + measured_rate * drift_alpha;
+  
+  // Clamp to maximum drift rate (use configured max drift rate)
+  if (drift_rate > max_drift_rate) {
+    drift_rate = max_drift_rate;
+  } else if (drift_rate < -max_drift_rate) {
+    drift_rate = -max_drift_rate;
+  }
+  
+  // Update last sync RTC time
+  last_sync_rtc = rtc_now;
+  
+#if MESH_DEBUG
+  MESH_DEBUG_PRINTLN("AutoTimeSync: Drift rate updated: offset=%d, dt=%u, measured_rate=%.6f, new_drift_rate=%.6f", 
+                     offset, dt, measured_rate, drift_rate);
+#endif
 }
 
 } 

@@ -13,6 +13,7 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
+#include <helpers/AutoTimeSync.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -67,7 +68,16 @@ struct NodePrefs {  // persisted to file
   double node_lat, node_lon;
   float freq;
   uint8_t tx_power_dbm;
-  uint8_t unused[3];
+  uint8_t auto_time_sync;
+  uint8_t time_sync_max_hops;
+  uint8_t time_sync_min_samples;
+  uint16_t time_sync_max_drift;
+  uint8_t time_req_pool_size;
+  uint16_t time_req_slew_limit;
+  uint8_t time_req_min_samples;
+  float time_sync_alpha;
+  float time_sync_max_drift_rate;
+  float time_sync_tolerance;
 };
 
 class MyMesh : public BaseChatMesh, ContactVisitor {
@@ -80,6 +90,8 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   char command[512+10];
   uint8_t tmp_buf[256];
   char hex_buf[512];
+  mesh::AutoTimeSync auto_time_sync;
+  unsigned long next_time_request;
 
   const char* getTypeName(uint8_t type) const {
     if (type == ADV_TYPE_CHAT) return "Chat";
@@ -274,9 +286,12 @@ protected:
     Serial.println("   ERROR: timed out, no ACK.");
   }
 
+  void onTimeRequestRecv(mesh::Packet* packet) override;
+  void onTimeReplyRecv(mesh::Packet* packet) override;
+
 public:
   MyMesh(mesh::Radio& radio, StdRNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
-     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
+     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables), auto_time_sync(&rtc)
   {
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
@@ -284,9 +299,20 @@ public:
     strcpy(_prefs.node_name, "NONAME");
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
+    _prefs.auto_time_sync = 1;
+    _prefs.time_sync_max_hops = 6;
+    _prefs.time_sync_min_samples = 3;
+    _prefs.time_sync_max_drift = 3600;
+    _prefs.time_req_pool_size = 0;
+    _prefs.time_req_slew_limit = 5;
+    _prefs.time_req_min_samples = 3;
+    _prefs.time_sync_alpha = 0.1f;
+    _prefs.time_sync_max_drift_rate = 0.01f;
+    _prefs.time_sync_tolerance = 5.0f;
 
     command[0] = 0;
     curr_recipient = NULL;
+    next_time_request = 0;
   }
 
   float getFreqPref() const { return _prefs.freq; }
@@ -337,6 +363,17 @@ public:
 
     loadContacts();
     _public = addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
+
+    // Configure auto time sync
+    auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                            _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+    auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                       _prefs.time_req_min_samples);
+    auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, 
+                                           _prefs.time_sync_max_drift_rate);
+
+    // Schedule initial time request (after 5 minutes to allow network setup)
+    next_time_request = futureMillis(300000);
   }
 
   void savePrefs() {
@@ -352,6 +389,14 @@ public:
       file.write((const uint8_t *)&_prefs, sizeof(_prefs));
       file.close();
     }
+    
+    // Apply configuration changes to AutoTimeSync
+    auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                            _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+    auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                       _prefs.time_req_min_samples);
+    auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, 
+                                           _prefs.time_sync_max_drift_rate);
   }
 
   void showWelcome() {
@@ -524,6 +569,11 @@ public:
   void loop() {
     BaseChatMesh::loop();
 
+    // Handle time request broadcasting
+    if (next_time_request && millisHasNowPassed(next_time_request)) {
+      sendTimeRequest();
+    }
+
     int len = strlen(command);
     while (Serial.available() && len < sizeof(command)-1) {
       char c = Serial.read();
@@ -543,6 +593,103 @@ public:
       handleCommand(command);
       command[0] = 0;  // reset command buffer
     }
+  }
+
+  void sendTimeRequest() {
+    if (!_prefs.auto_time_sync) return;  // Don't send if auto time sync is disabled
+    
+    // Generate time request
+    mesh::TimeReq req = auto_time_sync.generateTimeRequest(8);  // Simple fixed pool size for chat clients
+    
+    // Create raw packet for time request
+    mesh::Packet* pkt = createRawData((uint8_t*)&req, sizeof(req));
+    if (pkt) {
+      // Override the packet type to TIME_REQ
+      pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+      pkt->header |= (PAYLOAD_TYPE_TIME_REQ << PH_TYPE_SHIFT);
+      
+      sendFlood(pkt, 100);  // Small delay
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("Sent time request, nonce=%u, pool_size=%u", req.nonce, req.pool_size);
+#endif
+    }
+    
+    // Schedule next request in 24 hours
+    next_time_request = futureMillis(86400000);  // 24 hours in milliseconds
+  }
+
+  void onTimeRequestRecv(mesh::Packet* packet) {
+    if (packet->payload_len < sizeof(mesh::TimeReq)) {
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("onTimeRequestRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+      return;
+    }
+
+    mesh::TimeReq req;
+    memcpy(&req, packet->payload, sizeof(req));
+
+    // Use sender's public key hash (if available from packet path)
+    uint8_t sender_hash = 0x00;  // Default fallback
+    if (packet->path_len > 0) {
+      sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+    }
+
+    // Process the time request and check if we should respond
+    bool should_respond = auto_time_sync.processTimeRequest(req, sender_hash);
+    
+    if (should_respond) {
+      // Create time reply
+      mesh::TimeReply reply;
+      reply.magic = TIME_REPLY_MAGIC;
+      reply.nonce = req.nonce;
+      reply.timestamp = getRTCClock()->getCurrentTime();
+      reply.hop_count = packet->path_len;
+      reply.mac = auto_time_sync.calculateReplyMAC(reply.nonce, reply.timestamp, sender_hash);
+
+      // Create and send reply packet
+      mesh::Packet* reply_pkt = createRawData((uint8_t*)&reply, sizeof(reply));
+      if (reply_pkt) {
+        reply_pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+        reply_pkt->header |= (PAYLOAD_TYPE_TIME_REPLY << PH_TYPE_SHIFT);
+        
+        sendPacket(reply_pkt, 200);  // Small delay for reply
+        
+#if MESH_DEBUG
+        MESH_DEBUG_PRINTLN("Sent time reply, nonce=%u, timestamp=%u", reply.nonce, reply.timestamp);
+#endif
+      }
+    }
+  }
+
+  void onTimeReplyRecv(mesh::Packet* packet) {
+    if (packet->payload_len < sizeof(mesh::TimeReply)) {
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("onTimeReplyRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+      return;
+    }
+
+    mesh::TimeReply reply;
+    memcpy(&reply, packet->payload, sizeof(reply));
+
+    // Use sender's public key hash (if available from packet path)
+    uint8_t sender_hash = 0x00;  // Default fallback
+    if (packet->path_len > 0) {
+      sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+    }
+
+    // Process the time reply
+    bool processed = auto_time_sync.processTimeReply(reply, sender_hash);
+    
+#if MESH_DEBUG
+    if (processed) {
+      MESH_DEBUG_PRINTLN("Processed time reply from %02X, nonce=%u, timestamp=%u", 
+                         sender_hash, reply.nonce, reply.timestamp);
+    } else {
+      MESH_DEBUG_PRINTLN("Rejected time reply from %02X (invalid MAC or nonce)", sender_hash);
+    }
+#endif
   }
 };
 

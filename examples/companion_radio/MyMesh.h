@@ -34,6 +34,7 @@
 #include <helpers/IdentityStore.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
+#include <helpers/AutoTimeSync.h>
 #include <target.h>
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
@@ -132,6 +133,9 @@ protected:
   bool onChannelLoaded(uint8_t channel_idx, const ChannelDetails& ch) override { return setChannel(channel_idx, ch); }
   bool getChannelForSave(uint8_t channel_idx, ChannelDetails& ch) override { return getChannel(channel_idx, ch); }
 
+  void onTimeRequestRecv(mesh::Packet* packet) override;
+  void onTimeReplyRecv(mesh::Packet* packet) override;
+
 private:
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
@@ -154,6 +158,7 @@ private:
   void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
   void saveChannels() { _store->saveChannels(this); }
   void saveContacts() { _store->saveContacts(this); }
+  void sendTimeRequest();
 
 private:
   DataStore* _store;
@@ -162,6 +167,8 @@ private:
   uint32_t pending_status;
   uint32_t pending_telemetry;
   BaseSerialInterface *_serial;
+  mesh::AutoTimeSync auto_time_sync;
+  unsigned long next_time_request;
 
   ContactsIterator _iter;
   uint32_t _iter_filter_since;

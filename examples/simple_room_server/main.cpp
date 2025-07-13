@@ -16,6 +16,7 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/CommonCLI.h>
+#include <helpers/AutoTimeSync.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -156,6 +157,8 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   bool _logging;
   NodePrefs _prefs;
   CommonCLI _cli;
+  mesh::AutoTimeSync auto_time_sync;
+  unsigned long next_time_request;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   int num_clients;
   ClientInfo known_clients[MAX_CLIENTS];
@@ -704,12 +707,48 @@ protected:
     }
   }
 
+  void onTimeRequestRecv(mesh::Packet* packet) override {
+    // Room servers don't handle time requests in this implementation
+    // They only send them. This could be extended if needed.
+  }
+  
+  void onTimeReplyRecv(mesh::Packet* packet) override {
+    if (packet->payload_len < sizeof(mesh::TimeReply)) {
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("onTimeReplyRecv: Invalid packet size: %d", packet->payload_len);
+#endif
+      return;
+    }
+
+    mesh::TimeReply reply;
+    memcpy(&reply, packet->payload, sizeof(reply));
+
+    // Use sender's public key hash (if available from packet path)
+    uint8_t sender_hash = 0x00;  // Default fallback
+    if (packet->path_len > 0) {
+      sender_hash = packet->path[packet->path_len - 1];  // Last hop in path
+    }
+
+    // Process the time reply
+    bool processed = auto_time_sync.processTimeReply(reply, sender_hash);
+    
+#if MESH_DEBUG
+    if (processed) {
+      MESH_DEBUG_PRINTLN("Processed time reply from %02X, nonce=%u, timestamp=%u", 
+                         sender_hash, reply.nonce, reply.timestamp);
+    } else {
+      MESH_DEBUG_PRINTLN("Rejected time reply from %02X (invalid MAC or nonce)", sender_hash);
+    }
+#endif
+  }
+
 public:
   MyMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
      : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables),
-      _cli(board, rtc, &_prefs, this), telemetry(MAX_PACKET_PAYLOAD - 4)
+      _cli(board, rtc, &_prefs, this), telemetry(MAX_PACKET_PAYLOAD - 4), auto_time_sync(&rtc)
   {
     next_local_advert = next_flood_advert = 0;
+    next_time_request = 0;
     _logging = false;
 
     // defaults
@@ -731,6 +770,16 @@ public:
     _prefs.flood_advert_interval = 3;   // 3 hours
     _prefs.flood_max = 64;
     _prefs.interference_threshold = 0;  // disabled 
+    _prefs.auto_time_sync = 1;
+    _prefs.time_sync_max_hops = 6;
+    _prefs.time_sync_min_samples = 3;
+    _prefs.time_sync_max_drift = 3600;
+    _prefs.time_req_pool_size = 0;
+    _prefs.time_req_slew_limit = 5;
+    _prefs.time_req_min_samples = 3;
+    _prefs.time_sync_alpha = 0.1f;
+    _prefs.time_sync_max_drift_rate = 0.01f;
+    _prefs.time_sync_tolerance = 5.0f;
   #ifdef ROOM_PASSWORD
     StrHelper::strncpy(_prefs.guest_password, ROOM_PASSWORD, sizeof(_prefs.guest_password));
   #endif
@@ -752,6 +801,17 @@ public:
     radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
     radio_set_tx_power(_prefs.tx_power_dbm);
 
+    // Configure auto time sync
+    auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                            _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+    auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                       _prefs.time_req_min_samples);
+    auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, 
+                                           _prefs.time_sync_max_drift_rate);
+
+    // Schedule initial time request (after 5 minutes to allow network setup)
+    next_time_request = futureMillis(300000);
+
     updateAdvertTimer();
     updateFloodAdvertTimer();
   }
@@ -766,6 +826,14 @@ public:
 
   void savePrefs() override {
     _cli.savePrefs(_fs);
+    
+    // Apply configuration changes to AutoTimeSync
+    auto_time_sync.configure(_prefs.auto_time_sync, _prefs.time_sync_max_hops, 
+                            _prefs.time_sync_min_samples, _prefs.time_sync_max_drift);
+    auto_time_sync.configureTimeRequest(_prefs.time_req_pool_size, _prefs.time_req_slew_limit, 
+                                       _prefs.time_req_min_samples);
+    auto_time_sync.configureDriftCalculation(_prefs.time_sync_alpha, _prefs.time_sync_tolerance, 
+                                           _prefs.time_sync_max_drift_rate);
   }
 
   bool formatFileSystem() override {
@@ -843,6 +911,19 @@ public:
     ((SimpleMeshTables *)getTables())->resetStats();
   }
 
+  // Methods for UI display
+  void getTimeSyncStats(int& total_samples, int& recent_samples, uint32_t& last_sync, bool& clock_is_set, uint32_t& forwarded_count) {
+    auto_time_sync.getDetailedStats(total_samples, recent_samples, last_sync, clock_is_set, forwarded_count);
+  }
+
+  uint32_t getCurrentTime() {
+    return getRTCClock()->getCurrentTime();
+  }
+
+  bool isTimeSyncEnabled() {
+    return _prefs.auto_time_sync;
+  }
+
   void handleCommand(uint32_t sender_timestamp, char* command, char* reply) {
     while (*command == ' ') command++;   // skip leading spaces
 
@@ -857,6 +938,11 @@ public:
 
   void loop() {
     mesh::Mesh::loop();
+
+    // Handle time request broadcasting
+    if (next_time_request && millisHasNowPassed(next_time_request)) {
+      sendTimeRequest();
+    }
 
     if (millisHasNowPassed(next_push) && num_clients > 0) {
       // check for ACK timeouts
@@ -913,11 +999,55 @@ public:
     }
 
   #ifdef DISPLAY_CLASS
+    // Update time sync data for display
+    static unsigned long last_ui_update = 0;
+    if (millis() - last_ui_update > 1000) {  // Update every second
+      int total_samples, recent_samples;
+      uint32_t last_sync;
+      bool clock_is_set;
+      uint32_t forwarded_count;
+      getTimeSyncStats(total_samples, recent_samples, last_sync, clock_is_set, forwarded_count);
+      
+      TimeSyncDisplayData data;
+      data.enabled = isTimeSyncEnabled();
+      data.clock_is_set = clock_is_set;
+      data.recent_samples = recent_samples;
+      data.current_time = getCurrentTime();
+      
+      ui_task.updateTimeSyncData(data);
+      last_ui_update = millis();
+    }
+    
     ui_task.loop();
   #endif
 
     // TODO: periodically check for OLD/inactive entries in known_clients[], and evict
   }
+
+  void sendTimeRequest() {
+    if (!_prefs.auto_time_sync) return;  // Don't send if auto time sync is disabled
+    
+    // Generate time request
+    mesh::TimeReq req = auto_time_sync.generateTimeRequest(8);  // Simple fixed pool size for room servers
+    
+    // Create raw packet for time request
+    mesh::Packet* pkt = createRawData((uint8_t*)&req, sizeof(req));
+    if (pkt) {
+      // Override the packet type to TIME_REQ
+      pkt->header &= ~(PH_TYPE_MASK << PH_TYPE_SHIFT);
+      pkt->header |= (PAYLOAD_TYPE_TIME_REQ << PH_TYPE_SHIFT);
+      
+      sendFlood(pkt, 100);  // Small delay
+#if MESH_DEBUG
+      MESH_DEBUG_PRINTLN("Sent time request, nonce=%u, pool_size=%u", req.nonce, req.pool_size);
+#endif
+    }
+    
+    // Schedule next request in 24 hours
+    next_time_request = futureMillis(86400000);  // 24 hours in milliseconds
+  }
+
+
 };
 
 StdRNG fast_rng;
