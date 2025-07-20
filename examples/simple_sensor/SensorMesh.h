@@ -49,7 +49,7 @@ struct ContactInfo {
 };
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "2 Jul 2025"
+  #define FIRMWARE_BUILD_DATE   "20 Jul 2025"
 #endif
 
 #ifndef FIRMWARE_VERSION
