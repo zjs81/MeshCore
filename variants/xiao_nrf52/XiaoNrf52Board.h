@@ -25,6 +25,7 @@ protected:
 
 public:
   void begin();
+  void loop();
   uint8_t getStartupReason() const override { return startup_reason; }
 
 #if defined(P_LORA_TX_LED)

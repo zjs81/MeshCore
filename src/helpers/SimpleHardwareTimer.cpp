@@ -1,5 +1,8 @@
 #include "SimpleHardwareTimer.h"
 
+// SimpleHardwareTimer is only available on NRF52 platforms
+#ifdef NRF52_PLATFORM
+
 volatile bool SimpleHardwareTimer::timer_expired = false;
 
 void SimpleHardwareTimer::init() {
@@ -47,4 +50,6 @@ void SimpleHardwareTimer::rtc_handler() {
 
 extern "C" void RTC2_IRQHandler(void) {
   SimpleHardwareTimer::rtc_handler();
-} 
+}
+
+#endif // NRF52_PLATFORM 

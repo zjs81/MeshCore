@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "SenseCapSolarBoard.h"
+#include <helpers/NRFSleep.h>
 
 #include <bluefruit.h>
 #include <Wire.h>
@@ -21,6 +22,10 @@ static void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
 void SenseCapSolarBoard::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
+  
+  // Set low power mode and optimize CPU frequency  
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  Serial.printf("DEBUG: SenseCap Solar - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
 
 #if defined(PIN_WIRE_SDA) && defined(PIN_WIRE_SCL)
   Wire.setPins(PIN_WIRE_SDA, PIN_WIRE_SCL);
@@ -34,6 +39,14 @@ void SenseCapSolarBoard::begin() {
 #endif
 
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+}
+
+void SenseCapSolarBoard::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 bool SenseCapSolarBoard::startOTAUpdate(const char* id, char reply[]) {

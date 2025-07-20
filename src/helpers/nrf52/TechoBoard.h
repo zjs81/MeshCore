@@ -32,6 +32,7 @@ protected:
 public:
 
   void begin();
+  void loop();
   uint16_t getBattMilliVolts() override;
   bool startOTAUpdate(const char* id, char reply[]) override;
 

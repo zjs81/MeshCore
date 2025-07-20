@@ -3,6 +3,7 @@
 
 #ifdef THINKNODE_M1
 
+#include <helpers/NRFSleep.h>
 #include <bluefruit.h>
 #include <Wire.h>
 
@@ -24,6 +25,9 @@ void ThinkNodeM1Board::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
 
+  // Set low power mode and initialize power management
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+
   Wire.begin();
 
   #ifdef P_LORA_TX_LED
@@ -34,6 +38,15 @@ void ThinkNodeM1Board::begin() {
   pinMode(SX126X_POWER_EN, OUTPUT);
   digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+  Serial.printf("DEBUG: ThinkNode M1 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+}
+
+void ThinkNodeM1Board::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 uint16_t ThinkNodeM1Board::getBattMilliVolts() {

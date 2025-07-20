@@ -2,7 +2,7 @@
 #define _SEEED_XIAO_NRF52840_H_
 
 /** Master clock frequency */
-#define VARIANT_MCK       (64000000ul)
+#define VARIANT_MCK       (32000000ul)  // 32MHz for power optimization (was 64MHz)
 
 #define USE_LFXO      // Board uses 32khz crystal for LF
 //#define USE_LFRC    // Board uses RC for LF

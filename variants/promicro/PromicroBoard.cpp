@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "PromicroBoard.h"
+#include <helpers/NRFSleep.h>
 
 #include <bluefruit.h>
 #include <Wire.h>
@@ -10,6 +11,9 @@ void PromicroBoard::begin() {
     // for future use, sub-classes SHOULD call this from their begin()
     startup_reason = BD_STARTUP_NORMAL;
     btn_prev_state = HIGH;
+
+    // Set low power mode and initialize power management
+    sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
   
     pinMode(PIN_VBAT_READ, INPUT);
 
@@ -26,6 +30,15 @@ void PromicroBoard::begin() {
     pinMode(SX126X_POWER_EN, OUTPUT);
     digitalWrite(SX126X_POWER_EN, HIGH);
     delay(10);   // give sx1262 some time to power up
+    
+    // Initialize NRF sleep management
+    NRFSleep::init();
+    Serial.printf("DEBUG: Promicro NRF52 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+}
+
+void PromicroBoard::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 static void connect_callback(uint16_t conn_handle) {

@@ -1,7 +1,11 @@
 #pragma once
 
 #include <Arduino.h>
+
+// Only include NRF headers on NRF platforms
+#ifdef NRF52_PLATFORM
 #include <nrf.h>
+#endif
 
 /**
  * Hardware timer using RTC2 for precise timeout functionality.

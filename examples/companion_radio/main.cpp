@@ -197,5 +197,7 @@ void loop() {
   ui_task.loop();
 #endif
   
-  board.loop(); // Automatic light sleep power management
+#ifdef NRF52_PLATFORM
+  board.loop(); // Automatic light sleep power management (NRF only)
+#endif
 }

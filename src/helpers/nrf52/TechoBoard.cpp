@@ -3,6 +3,7 @@
 
 #ifdef LILYGO_TECHO
 
+#include <helpers/NRFSleep.h>
 #include <bluefruit.h>
 #include <Wire.h>
 
@@ -24,11 +25,23 @@ void TechoBoard::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
 
+  // Set low power mode and initialize power management
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+
   Wire.begin();
 
   pinMode(SX126X_POWER_EN, OUTPUT);
   digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+  Serial.printf("DEBUG: Techo - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+}
+
+void TechoBoard::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 uint16_t TechoBoard::getBattMilliVolts() {

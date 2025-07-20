@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "XiaoNrf52Board.h"
+#include <helpers/NRFSleep.h>
 
 #include <bluefruit.h>
 #include <Wire.h>
@@ -26,6 +27,9 @@ void XiaoNrf52Board::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
 
+  // Set low power mode and initialize power management
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  
   pinMode(PIN_VBAT, INPUT);
   pinMode(VBAT_ENABLE, OUTPUT);
   digitalWrite(VBAT_ENABLE, HIGH);
@@ -44,6 +48,15 @@ void XiaoNrf52Board::begin() {
 //  pinMode(SX126X_POWER_EN, OUTPUT);
 //  digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+  Serial.printf("DEBUG: XIAO NRF52 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+}
+
+void XiaoNrf52Board::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 bool XiaoNrf52Board::startOTAUpdate(const char* id, char reply[]) {

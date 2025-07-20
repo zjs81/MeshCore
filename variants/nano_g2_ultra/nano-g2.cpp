@@ -3,6 +3,7 @@
 
 #ifdef NANO_G2_ULTRA
 
+#include <helpers/NRFSleep.h>
 #include <bluefruit.h>
 #include <Wire.h>
 
@@ -26,6 +27,10 @@ void NanoG2Ultra::begin()
 {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
+  
+  // Set low power mode and optimize CPU frequency  
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  Serial.printf("DEBUG: Nano G2 Ultra - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
 
   // set user button
   pinMode(PIN_BUTTON1, INPUT);
@@ -39,6 +44,14 @@ void NanoG2Ultra::begin()
   digitalWrite(SX126X_POWER_EN, HIGH);
 
   delay(10);
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+}
+
+void NanoG2Ultra::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 uint16_t NanoG2Ultra::getBattMilliVolts()

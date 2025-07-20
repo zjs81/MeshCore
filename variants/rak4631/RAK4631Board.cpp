@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "RAK4631Board.h"
+#include <helpers/NRFSleep.h>
 
 #include <bluefruit.h>
 #include <Wire.h>
@@ -21,6 +22,11 @@ static void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
 void RAK4631Board::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
+  
+  // Set low power mode and optimize CPU frequency  
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  Serial.printf("DEBUG: RAK4631 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+  
   pinMode(PIN_VBAT_READ, INPUT);
 #ifdef PIN_USER_BTN
   pinMode(PIN_USER_BTN, INPUT_PULLUP);
@@ -39,6 +45,14 @@ void RAK4631Board::begin() {
   pinMode(SX126X_POWER_EN, OUTPUT);
   digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+}
+
+void RAK4631Board::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 bool RAK4631Board::startOTAUpdate(const char* id, char reply[]) {

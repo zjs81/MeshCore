@@ -27,6 +27,7 @@ protected:
 
 public:
   void begin();
+  void loop();
 
 #define BATTERY_SAMPLES 8
 

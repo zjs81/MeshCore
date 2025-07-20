@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "WioTrackerL1Board.h"
+#include <helpers/NRFSleep.h>
 
 #include <bluefruit.h>
 #include <Wire.h>
@@ -22,6 +23,10 @@ void WioTrackerL1Board::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
   btn_prev_state = HIGH;
+  
+  // Set low power mode and optimize CPU frequency  
+  sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  Serial.printf("DEBUG: Wio Tracker L1 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
 
   pinMode(PIN_VBAT_READ, INPUT); // VBAT ADC input
   // Set all button pins to INPUT_PULLUP
@@ -45,6 +50,14 @@ void WioTrackerL1Board::begin() {
   #endif
 
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+}
+
+void WioTrackerL1Board::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 bool WioTrackerL1Board::startOTAUpdate(const char* id, char reply[]) {

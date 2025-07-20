@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "MinewsemiME25LS01Board.h"
+#include <helpers/NRFSleep.h>
 #include <Wire.h>
 
 #include <bluefruit.h>
@@ -12,6 +13,7 @@ void MinewsemiME25LS01Board::begin() {
   pinMode(PIN_VBAT_READ, INPUT);
 
   sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  Serial.printf("DEBUG: Minewsemi ME25LS01 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
 
 #ifdef BUTTON_PIN
   pinMode(BUTTON_PIN, INPUT);
@@ -30,6 +32,14 @@ void MinewsemiME25LS01Board::begin() {
 #endif
 
   delay(10);   // give sx1262 some time to power up
+  
+  // Initialize NRF sleep management
+  NRFSleep::init();
+}
+
+void MinewsemiME25LS01Board::loop() {
+  // Complete sleep management handled by NRFSleep
+  NRFSleep::manageSleepLoop();
 }
 
 static BLEDfu bledfu;

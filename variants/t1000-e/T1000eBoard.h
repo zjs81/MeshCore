@@ -110,9 +110,6 @@ public:
     NVIC_SystemReset();
   }
 
-  // Light sleep implementation
-  void enterLightSleep(uint32_t timeout_ms = 0);
-  void wakeFromSleep();
   //  bool startOTAUpdate(const char* id, char reply[]) override;
 
 };

@@ -2,7 +2,7 @@
 #define _SEEED_WIO_TRACKER_L1_H_
 
 /** Master clock frequency */
-#define VARIANT_MCK             (64000000ul)
+#define VARIANT_MCK             (32000000ul)  // 32MHz for power optimization (was 64MHz)
 
 #define USE_LFXO                // Board uses 32khz crystal for LF
 

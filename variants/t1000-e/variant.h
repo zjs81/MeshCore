@@ -12,7 +12,7 @@
 // Low frequency clock source
 
 #define USE_LFXO    // 32.768 kHz crystal oscillator
-#define VARIANT_MCK (64000000ul)
+#define VARIANT_MCK (32000000ul)  // 32MHz for power optimization (was 64MHz)
 // #define USE_LFRC    // 32.768 kHz RC oscillator
 
 ////////////////////////////////////////////////////////////////////////////////
