@@ -216,8 +216,14 @@ void NRFSleep::enterDeepSleep() {
     if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
 #endif
     // Check LoRa activity
-    if (digitalRead(LORA_DIO_1) == HIGH) wake_reason = "lora-dio1";
-    if (digitalRead(LORA_BUSY) == HIGH) wake_reason = "lora-busy";
+    if (digitalRead(LORA_DIO_1) == HIGH) {
+      wake_reason = "lora-dio1";
+      markLoraActivity(); // Update activity timestamp
+    }
+    if (digitalRead(LORA_BUSY) == HIGH) {
+      wake_reason = "lora-busy";
+      markLoraActivity(); // Update activity timestamp
+    }
 #ifdef PIN_BUZZER
     if (rtttl::isPlaying()) wake_reason = "buzzer";
 #endif
@@ -344,8 +350,14 @@ void NRFSleep::attemptSleep() {
     if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
 #endif
     // Check LoRa activity
-    if (digitalRead(LORA_DIO_1) == HIGH) wake_reason = "lora-dio1";
-    if (digitalRead(LORA_BUSY) == HIGH) wake_reason = "lora-busy";
+    if (digitalRead(LORA_DIO_1) == HIGH) {
+      wake_reason = "lora-dio1";
+      markLoraActivity(); // Update activity timestamp
+    }
+    if (digitalRead(LORA_BUSY) == HIGH) {
+      wake_reason = "lora-busy";
+      markLoraActivity(); // Update activity timestamp
+    }
 #ifdef PIN_BUZZER
     if (rtttl::isPlaying()) wake_reason = "buzzer-started";
 #endif
