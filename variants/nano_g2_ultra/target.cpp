@@ -2,6 +2,7 @@
 #include "target.h"
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/sensors/MicroNMEALocationProvider.h>
+#include <helpers/NRFSleep.h>
 
 NanoG2Ultra board;
 
@@ -21,7 +22,15 @@ DISPLAY_CLASS display;
 bool radio_init()
 {
   rtc_clock.begin(Wire);
-  return radio.std_init(&SPI);
+  bool success = radio.std_init(&SPI);
+  
+  // Initialize NRF sleep management with radio instance for proper airtime calculations
+  if (success) {
+    NRFSleep::init(&radio_driver);
+    Serial.println("DEBUG: Nano G2 Ultra - NRFSleep initialized with radio instance");
+  }
+  
+  return success;
 }
 
 uint32_t radio_get_rng_seed()

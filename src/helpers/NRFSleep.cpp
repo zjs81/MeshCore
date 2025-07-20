@@ -76,15 +76,19 @@ bool NRFSleep::shouldDelayForLora() {
   uint32_t time_since_lora = (last_lora_activity == 0) ? lora_delay_ms + 1 : (now - last_lora_activity);
   bool lora_activity_recent = time_since_lora < lora_delay_ms;
   
-  // Additional check: Don't sleep if LoRa radio is currently busy
-  bool lora_busy = digitalRead(LORA_BUSY) == HIGH;
+  // Smart LoRa BUSY check: Only check if we haven't had very recent activity
+  // This prevents interference with normal radio driver operations
+  bool lora_busy = false;
+  if (time_since_lora > 500) {  // Only check BUSY if no activity for 500ms
+    lora_busy = digitalRead(LORA_BUSY) == HIGH;
+  }
   
   if (lora_activity_recent || lora_busy) {
     const char* reason = lora_busy ? "LoRa BUSY active" : "recent LoRa activity";
     Serial.printf("DEBUG: Delaying sleep - %s (%d ms ago, <%d ms threshold)\n", 
                   reason, time_since_lora, lora_delay_ms);
     
-    // Update activity timestamp if radio is currently busy
+    // Update activity timestamp if radio is currently busy (less aggressive)
     if (lora_busy) {
       last_lora_activity = now;
     }

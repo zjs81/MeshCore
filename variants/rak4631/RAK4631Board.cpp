@@ -46,8 +46,7 @@ void RAK4631Board::begin() {
   digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
   
-  // Initialize NRF sleep management
-  NRFSleep::init();
+  // Initialize NRF sleep management - will be properly initialized with radio instance in target.cpp
 }
 
 void RAK4631Board::loop() {
