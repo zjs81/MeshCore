@@ -31,7 +31,6 @@ bool radio_init() {
   // Initialize NRF sleep management with radio instance for proper airtime calculations
   if (success) {
     NRFSleep::init(&radio_driver);
-    Serial.println("DEBUG: RAK4631 - NRFSleep initialized with radio instance");
   }
   
   return success;

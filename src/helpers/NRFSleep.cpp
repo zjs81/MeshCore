@@ -96,6 +96,9 @@ bool NRFSleep::shouldDelayForLora() {
     return true; // Should delay sleep
   }
   
+  // Debug: Show when sleep is allowed
+  Serial.printf("DEBUG: Sleep allowed - no LoRa activity for %d ms (>%d ms threshold)\n", 
+                time_since_lora, lora_delay_ms);
   return false; // OK to sleep
 }
 
@@ -264,42 +267,20 @@ uint32_t NRFSleep::calculateMaxLoRaTransactionTime() {
   
   // Fallback if no radio instance available
   if (!radio_instance) {
-    Serial.println("DEBUG: No radio instance - using conservative 20s delay");
-    return 20000; // Conservative fallback
+    Serial.println("DEBUG: No radio instance - using 5s delay");
+    return 5000; // Shorter, more reasonable fallback
   }
   
   // Calculate for typical mesh packet sizes
-  uint32_t small_packet_time = radio_instance->getEstAirtimeFor(32);   // Small packet (32 bytes)
-  uint32_t medium_packet_time = radio_instance->getEstAirtimeFor(128); // Medium packet (128 bytes)
   uint32_t large_packet_time = radio_instance->getEstAirtimeFor(255);  // Max packet (255 bytes)
   
-  // Use the largest packet time as our base calculation
-  uint32_t max_packet_time_ms = large_packet_time;
+  // Simple calculation: max packet time + retries + safety margin
+  uint32_t total_time = (large_packet_time * 4) + 2000; // 4x for retries, +2s safety
   
-  Serial.printf("DEBUG: Actual LoRa airtime - 32B:%dms, 128B:%dms, 255B:%dms\n", 
-                small_packet_time, medium_packet_time, large_packet_time);
+  Serial.printf("DEBUG: Dynamic LoRa delay: %dms (based on %dms airtime)\n", 
+                total_time, large_packet_time);
   
-  // Add mesh network overhead based on actual radio performance:
-  // - ACK timeout and response: 2x packet time (round trip)
-  // - Retransmission attempts: up to 3 retries  
-  // - Processing delays: 1000ms safety margin
-  // - CAD (Channel Activity Detection): 100ms
-  
-  uint32_t ack_timeout_ms = max_packet_time_ms * 2;    // Round trip for ACK
-  uint32_t max_retries = 3;                            // Standard mesh retry count
-  uint32_t processing_delay_ms = 1000;                 // CPU processing safety margin
-  uint32_t cad_delay_ms = 100;                         // Channel Activity Detection
-  
-  // Total transaction time: (packet + ACK) per retry attempt + overhead
-  uint32_t total_transaction_time = 
-    (max_packet_time_ms + ack_timeout_ms) * (max_retries + 1) + 
-    processing_delay_ms + 
-    cad_delay_ms;
-  
-  Serial.printf("DEBUG: Mesh transaction breakdown - packet:%dms, ack:%dms, retries:%d, total:%dms\n",
-                max_packet_time_ms, ack_timeout_ms, max_retries, total_transaction_time);
-  
-  return total_transaction_time;
+  return total_time;
 }
 
 // Get dynamic LoRa sleep delay based on calculated transaction time
@@ -312,8 +293,6 @@ uint32_t NRFSleep::getLoRaSleepDelayMs() {
   if (cached_delay == 0 || (now - last_calculation) > 60000) {
     cached_delay = calculateMaxLoRaTransactionTime();
     last_calculation = now;
-    
-    Serial.printf("DEBUG: Dynamic LoRa sleep delay: %dms (using actual radio config vs 20000ms fixed)\n", cached_delay);
   }
   
   return cached_delay;
