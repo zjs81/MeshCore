@@ -7,6 +7,15 @@
 #include <NonBlockingRtttl.h>
 #endif
 
+// LoRa activity tracking
+static volatile uint32_t last_lora_activity = 0;
+static const uint32_t LORA_SLEEP_DELAY_MS = 20000; // 20 seconds
+
+// LoRa DIO1 interrupt handler
+void lora_dio1_interrupt() {
+  last_lora_activity = millis();
+}
+
 // Include MyMesh for BLE debug logging (only when companion radio is built)
 #ifdef MAX_CONTACTS
 #include "../../examples/companion_radio/MyMesh.h"
@@ -42,6 +51,11 @@ void T1000eBoard::begin() {
 
   Wire.begin();
   SimpleHardwareTimer::init();
+  
+  // Setup LoRa DIO1 interrupt for activity tracking
+  pinMode(33, INPUT); // LORA_DIO_1 pin
+  attachInterrupt(digitalPinToInterrupt(33), lora_dio1_interrupt, RISING);
+  Serial.println("DEBUG: LoRa DIO1 interrupt configured for sleep management");
   
 #ifdef MAX_CONTACTS
   // Register BLE callbacks for proper advertising management
@@ -119,6 +133,14 @@ void T1000eBoard::loop() {
   
   // Light sleep check every 2 seconds
   if (now - last_sleep_check > 6000) {
+    // Check if LoRa activity occurred within the last 20 seconds
+    bool lora_activity_recent = (now - last_lora_activity) < LORA_SLEEP_DELAY_MS;
+    if (lora_activity_recent) {
+      //Serial.println("DEBUG: Skipping sleep - LoRa activity within 20 seconds");
+      last_sleep_check = now;
+      return;
+    }
+    
     #ifdef PIN_BUZZER
     if (!rtttl::isPlaying()) {
       //Serial.println("DEBUG: About to sleep (buzzer mode)");
@@ -133,7 +155,7 @@ void T1000eBoard::loop() {
         Serial.println("DEBUG: BLE connected - using 1s sleep");
         // Note: Advertising already stopped by connect callback
       } else {
-        sleep_duration_ms = 3000; // 3 seconds when not connected
+        sleep_duration_ms = 10000; // 10 seconds when not connected
         //Serial.println("DEBUG: BLE not connected - using 3s sleep");
         
         // Stop advertising during sleep to save power (if still running)
@@ -144,7 +166,7 @@ void T1000eBoard::loop() {
         }
       }
 #else
-      sleep_duration_ms = 3000; // Default 3 seconds if no BLE support
+      sleep_duration_ms = 10000; // Default 10 seconds if no BLE support
 #endif
       
       uint32_t sleep_start = millis();
@@ -171,7 +193,7 @@ void T1000eBoard::loop() {
       
       // Determine wake reason
       const char* wake_reason = "timeout";
-      if (actual_sleep_duration < 2500) { // Woke up early
+      if (actual_sleep_duration < 9500) { // Woke up early
 #ifdef BUTTON_PIN
         if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
 #endif
@@ -181,6 +203,8 @@ void T1000eBoard::loop() {
         if (digitalRead(PIN_SERIAL2_RX) == LOW) wake_reason = "ble-rx2";
         if (digitalRead(PIN_SERIAL2_TX) == LOW) wake_reason = "ble-tx2";
 #endif
+        // Check LoRa DIO1 activity
+        if (digitalRead(33) == HIGH) wake_reason = "lora-dio1";
         // Check buzzer last to avoid interfering with ACK sounds
         if (rtttl::isPlaying()) wake_reason = "buzzer-started";
       }
@@ -202,7 +226,7 @@ void T1000eBoard::loop() {
       //Serial.println("DEBUG: BLE connected - using 1s sleep");
       // Note: Advertising already stopped by connect callback
     } else {
-      sleep_duration_ms = 3000; // 3 seconds when not connected
+      sleep_duration_ms = 10000; // 5 seconds when not connected
       //Serial.println("DEBUG: BLE not connected - using 3s sleep");
       
       // Stop advertising during sleep to save power (if still running)
@@ -213,7 +237,7 @@ void T1000eBoard::loop() {
       }
     }
 #else
-    sleep_duration_ms = 3000; // Default 3 seconds if no BLE support
+    sleep_duration_ms = 10000; // Default 10 seconds if no BLE support
 #endif
     
     uint32_t sleep_start = millis();
@@ -240,7 +264,7 @@ void T1000eBoard::loop() {
     
     // Determine wake reason
     const char* wake_reason = "timeout";
-    if (actual_sleep_duration < 2500) { // Woke up early
+    if (actual_sleep_duration < 9500) { // Woke up early
 #ifdef BUTTON_PIN
       if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
 #endif
@@ -250,9 +274,11 @@ void T1000eBoard::loop() {
       if (digitalRead(PIN_SERIAL2_RX) == LOW) wake_reason = "ble-rx2";
       if (digitalRead(PIN_SERIAL2_TX) == LOW) wake_reason = "ble-tx2";
 #endif
+      // Check LoRa DIO1 activity
+      if (digitalRead(33) == HIGH) wake_reason = "lora-dio1";
     }
     
-    //Serial.printf("DEBUG: Woke up from sleep (no buzzer mode) - slept for %d ms, reason: %s\n", actual_sleep_duration, wake_reason);
+    Serial.printf("DEBUG: Woke up from sleep (no buzzer mode) - slept for %d ms, reason: %s\n", actual_sleep_duration, wake_reason);
     #endif
     
     last_sleep_check = now;
@@ -267,7 +293,7 @@ void T1000eBoard::enterLightSleep(uint32_t timeout_ms) {
   }
 #endif
 
-  // Configure wake sources (NO DIO1 to avoid LoRa conflicts)
+  // Configure wake sources
 #ifdef BUTTON_PIN
   // Button wake-up
   nrf_gpio_cfg_sense_input(
@@ -276,6 +302,13 @@ void T1000eBoard::enterLightSleep(uint32_t timeout_ms) {
     NRF_GPIO_PIN_SENSE_HIGH
   );
 #endif
+
+  // LoRa DIO1 wake-up for radio activity
+  nrf_gpio_cfg_sense_input(
+    digitalPinToInterrupt(33), // LORA_DIO_1
+    NRF_GPIO_PIN_NOPULL,
+    NRF_GPIO_PIN_SENSE_HIGH
+  );
 
   // BLE UART RX wake-up (for incoming BLE data)
 #ifdef MAX_CONTACTS  // Only if companion radio (BLE) is enabled
@@ -323,6 +356,11 @@ void T1000eBoard::enterLightSleep(uint32_t timeout_ms) {
     }
 #endif
 
+    // Check LoRa DIO1 for radio activity
+    if (digitalRead(33) == HIGH) {
+      return;
+    }
+
 #ifdef MAX_CONTACTS
     // Check BLE UART pins for activity
     if (digitalRead(PIN_SERIAL1_RX) == LOW || digitalRead(PIN_SERIAL1_TX) == LOW ||
@@ -360,6 +398,9 @@ void T1000eBoard::wakeFromSleep() {
 #ifdef BUTTON_PIN
   nrf_gpio_cfg_input(digitalPinToInterrupt(BUTTON_PIN), NRF_GPIO_PIN_NOPULL);
 #endif
+
+  // Reset LoRa DIO1 to normal input
+  nrf_gpio_cfg_input(digitalPinToInterrupt(33), NRF_GPIO_PIN_NOPULL);
 
 #ifdef MAX_CONTACTS
   // Reset all BLE UART pins to normal input  
