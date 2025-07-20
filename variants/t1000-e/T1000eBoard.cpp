@@ -7,6 +7,22 @@
 #include <NonBlockingRtttl.h>
 #endif
 
+// Include MyMesh for BLE debug logging (only when companion radio is built)
+#ifdef MAX_CONTACTS
+#include "../../examples/companion_radio/MyMesh.h"
+
+// BLE event callbacks for proper advertising management
+void ble_connect_callback(uint16_t conn_handle) {
+  Serial.println("DEBUG: BLE client connected - stopping advertising");
+  Bluefruit.Advertising.stop();
+}
+
+void ble_disconnect_callback(uint16_t conn_handle, uint8_t reason) {
+  Serial.printf("DEBUG: BLE client disconnected (reason: %d) - restarting advertising\n", reason);
+  Bluefruit.Advertising.start(0);
+}
+#endif
+
 void T1000eBoard::begin() {
   // for future use, sub-classes SHOULD call this from their begin()
   startup_reason = BD_STARTUP_NORMAL;
@@ -26,6 +42,13 @@ void T1000eBoard::begin() {
 
   Wire.begin();
   SimpleHardwareTimer::init();
+  
+#ifdef MAX_CONTACTS
+  // Register BLE callbacks for proper advertising management
+  Bluefruit.Periph.setConnectCallback(ble_connect_callback);
+  Bluefruit.Periph.setDisconnectCallback(ble_disconnect_callback);
+  Serial.println("DEBUG: BLE callbacks registered for advertising management");
+#endif
   
   delay(10);   // give sx1262 some time to power up
 }
@@ -94,16 +117,142 @@ void T1000eBoard::loop() {
   static uint32_t last_sleep_check = 0;
   uint32_t now = millis();
   
-  // Light sleep check every second
-  if (now - last_sleep_check > 1000) {
+  // Light sleep check every 2 seconds
+  if (now - last_sleep_check > 6000) {
     #ifdef PIN_BUZZER
     if (!rtttl::isPlaying()) {
-      enterLightSleep(500);
+      //Serial.println("DEBUG: About to sleep (buzzer mode)");
+      
+      // Dynamic sleep duration based on BLE connection status
+      uint32_t sleep_duration_ms;
+      bool was_advertising = false;
+      
+#ifdef MAX_CONTACTS
+      if (Bluefruit.connected()) {
+        sleep_duration_ms = 1000; // 1 second when BLE connected - high responsiveness
+        Serial.println("DEBUG: BLE connected - using 1s sleep");
+        // Note: Advertising already stopped by connect callback
+      } else {
+        sleep_duration_ms = 3000; // 3 seconds when not connected
+        //Serial.println("DEBUG: BLE not connected - using 3s sleep");
+        
+        // Stop advertising during sleep to save power (if still running)
+        if (Bluefruit.Advertising.isRunning()) {
+          Bluefruit.Advertising.stop();
+          was_advertising = true;
+          //Serial.println("DEBUG: Stopped BLE advertising for sleep");
+        }
+      }
+#else
+      sleep_duration_ms = 3000; // Default 3 seconds if no BLE support
+#endif
+      
+      uint32_t sleep_start = millis();
+      enterLightSleep(sleep_duration_ms);
       wakeFromSleep();
+      uint32_t actual_sleep_duration = millis() - sleep_start;
+      
+      // Restart advertising if we stopped it
+#ifdef MAX_CONTACTS
+      if (was_advertising && !Bluefruit.connected()) {
+        Bluefruit.Advertising.start(0);
+        Serial.println("DEBUG: Restarted BLE advertising after sleep");
+      }
+      
+      // Fallback: Ensure advertising state is correct
+      if (!Bluefruit.connected() && !Bluefruit.Advertising.isRunning()) {
+        Bluefruit.Advertising.start(0);
+        Serial.println("DEBUG: Fallback - restarted advertising (was stopped)");
+      } else if (Bluefruit.connected() && Bluefruit.Advertising.isRunning()) {
+        Bluefruit.Advertising.stop();
+        Serial.println("DEBUG: Fallback - stopped advertising (client connected)");
+      }
+#endif
+      
+      // Determine wake reason
+      const char* wake_reason = "timeout";
+      if (actual_sleep_duration < 2500) { // Woke up early
+#ifdef BUTTON_PIN
+        if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
+#endif
+#ifdef MAX_CONTACTS
+        if (digitalRead(PIN_SERIAL1_RX) == LOW) wake_reason = "ble-rx1";
+        if (digitalRead(PIN_SERIAL1_TX) == LOW) wake_reason = "ble-tx1";
+        if (digitalRead(PIN_SERIAL2_RX) == LOW) wake_reason = "ble-rx2";
+        if (digitalRead(PIN_SERIAL2_TX) == LOW) wake_reason = "ble-tx2";
+#endif
+        // Check buzzer last to avoid interfering with ACK sounds
+        if (rtttl::isPlaying()) wake_reason = "buzzer-started";
+      }
+      
+      //Serial.printf("DEBUG: Woke up from sleep (buzzer mode) - slept for %d ms, reason: %s\n", actual_sleep_duration, wake_reason);
+    } else {
+      //Serial.println("DEBUG: Skipping sleep - buzzer is playing");
     }
     #else
-    enterLightSleep(500);
+    //Serial.println("DEBUG: About to sleep (no buzzer mode)");
+    
+    // Dynamic sleep duration based on BLE connection status
+    uint32_t sleep_duration_ms;
+    bool was_advertising = false;
+    
+#ifdef MAX_CONTACTS
+    if (Bluefruit.connected()) {
+      sleep_duration_ms = 1000; // 1 second when BLE connected
+      //Serial.println("DEBUG: BLE connected - using 1s sleep");
+      // Note: Advertising already stopped by connect callback
+    } else {
+      sleep_duration_ms = 3000; // 3 seconds when not connected
+      //Serial.println("DEBUG: BLE not connected - using 3s sleep");
+      
+      // Stop advertising during sleep to save power (if still running)
+      if (Bluefruit.Advertising.isRunning()) {
+        Bluefruit.Advertising.stop();
+        was_advertising = true;
+        //Serial.println("DEBUG: Stopped BLE advertising for sleep");
+      }
+    }
+#else
+    sleep_duration_ms = 3000; // Default 3 seconds if no BLE support
+#endif
+    
+    uint32_t sleep_start = millis();
+    enterLightSleep(sleep_duration_ms);
     wakeFromSleep();
+    uint32_t actual_sleep_duration = millis() - sleep_start;
+    
+    // Restart advertising if we stopped it
+#ifdef MAX_CONTACTS
+    if (was_advertising && !Bluefruit.connected()) {
+      Bluefruit.Advertising.start(0);
+      Serial.println("DEBUG: Restarted BLE advertising after sleep");
+    }
+    
+    // Fallback: Ensure advertising state is correct
+    if (!Bluefruit.connected() && !Bluefruit.Advertising.isRunning()) {
+      Bluefruit.Advertising.start(0);
+      //Serial.println("DEBUG: Fallback - restarted advertising (was stopped)");
+    } else if (Bluefruit.connected() && Bluefruit.Advertising.isRunning()) {
+      Bluefruit.Advertising.stop();
+      //Serial.println("DEBUG: Fallback - stopped advertising (client connected)");
+    }
+#endif
+    
+    // Determine wake reason
+    const char* wake_reason = "timeout";
+    if (actual_sleep_duration < 2500) { // Woke up early
+#ifdef BUTTON_PIN
+      if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
+#endif
+#ifdef MAX_CONTACTS
+      if (digitalRead(PIN_SERIAL1_RX) == LOW) wake_reason = "ble-rx1";
+      if (digitalRead(PIN_SERIAL1_TX) == LOW) wake_reason = "ble-tx1";
+      if (digitalRead(PIN_SERIAL2_RX) == LOW) wake_reason = "ble-rx2";
+      if (digitalRead(PIN_SERIAL2_TX) == LOW) wake_reason = "ble-tx2";
+#endif
+    }
+    
+    //Serial.printf("DEBUG: Woke up from sleep (no buzzer mode) - slept for %d ms, reason: %s\n", actual_sleep_duration, wake_reason);
     #endif
     
     last_sleep_check = now;
@@ -118,12 +267,43 @@ void T1000eBoard::enterLightSleep(uint32_t timeout_ms) {
   }
 #endif
 
-  // Configure button wake-up
+  // Configure wake sources (NO DIO1 to avoid LoRa conflicts)
 #ifdef BUTTON_PIN
+  // Button wake-up
   nrf_gpio_cfg_sense_input(
     digitalPinToInterrupt(BUTTON_PIN),
     NRF_GPIO_PIN_PULLDOWN,
     NRF_GPIO_PIN_SENSE_HIGH
+  );
+#endif
+
+  // BLE UART RX wake-up (for incoming BLE data)
+#ifdef MAX_CONTACTS  // Only if companion radio (BLE) is enabled
+  // BLE UART RX wake-up
+  nrf_gpio_cfg_sense_input(
+    digitalPinToInterrupt(PIN_SERIAL1_RX),
+    NRF_GPIO_PIN_PULLUP,
+    NRF_GPIO_PIN_SENSE_LOW
+  );
+  
+  // BLE UART TX wake-up (for outgoing BLE data)
+  nrf_gpio_cfg_sense_input(
+    digitalPinToInterrupt(PIN_SERIAL1_TX),
+    NRF_GPIO_PIN_PULLUP,
+    NRF_GPIO_PIN_SENSE_LOW
+  );
+  
+  // Also configure UART2 in case BLE uses it
+  nrf_gpio_cfg_sense_input(
+    digitalPinToInterrupt(PIN_SERIAL2_RX),
+    NRF_GPIO_PIN_PULLUP,
+    NRF_GPIO_PIN_SENSE_LOW
+  );
+  
+  nrf_gpio_cfg_sense_input(
+    digitalPinToInterrupt(PIN_SERIAL2_TX),
+    NRF_GPIO_PIN_PULLUP,
+    NRF_GPIO_PIN_SENSE_LOW
   );
 #endif
 
@@ -142,37 +322,54 @@ void T1000eBoard::enterLightSleep(uint32_t timeout_ms) {
       return;
     }
 #endif
-    
-#ifdef PIN_BUZZER
-    if (rtttl::isPlaying()) {
+
+#ifdef MAX_CONTACTS
+    // Check BLE UART pins for activity
+    if (digitalRead(PIN_SERIAL1_RX) == LOW || digitalRead(PIN_SERIAL1_TX) == LOW ||
+        digitalRead(PIN_SERIAL2_RX) == LOW || digitalRead(PIN_SERIAL2_TX) == LOW) {
       return;
     }
+    
+    // Remove BLE connection check since we handle this at higher level
+    // and stop advertising during sleep anyway
 #endif
     
-    uint32_t elapsed = millis() - sleep_start;
-    if (elapsed >= timeout_ms) {
-      break;
-    }
-    
-    sd_app_evt_wait();
-    
 #ifdef PIN_BUZZER
-    if (rtttl::isPlaying()) {
-      return;
+    // Reduced buzzer checking to avoid interfering with ACK sounds
+    static uint32_t last_buzzer_check = 0;
+    if (millis() - last_buzzer_check > 100) { // Check every 100ms
+      if (rtttl::isPlaying()) {
+        return;
+      }
+      last_buzzer_check = millis();
     }
 #endif
     
     if ((millis() - sleep_start) >= timeout_ms) {
       break;
     }
+    
+    sd_app_evt_wait();
   }
 }
 
 void T1000eBoard::wakeFromSleep() {
-  // Clean up GPIO configuration
+  Bluefruit.Advertising.start(0); // restart advertising
+
+  // Clean up GPIO configuration for wake sources
 #ifdef BUTTON_PIN
   nrf_gpio_cfg_input(digitalPinToInterrupt(BUTTON_PIN), NRF_GPIO_PIN_NOPULL);
 #endif
+
+#ifdef MAX_CONTACTS
+  // Reset all BLE UART pins to normal input  
+  nrf_gpio_cfg_input(digitalPinToInterrupt(PIN_SERIAL1_RX), NRF_GPIO_PIN_NOPULL);
+  nrf_gpio_cfg_input(digitalPinToInterrupt(PIN_SERIAL1_TX), NRF_GPIO_PIN_NOPULL);
+  nrf_gpio_cfg_input(digitalPinToInterrupt(PIN_SERIAL2_RX), NRF_GPIO_PIN_NOPULL);
+  nrf_gpio_cfg_input(digitalPinToInterrupt(PIN_SERIAL2_TX), NRF_GPIO_PIN_NOPULL);
+#endif
+
+  Serial.println("DEBUG: GPIO wake sources cleaned up");
 }
 
 
