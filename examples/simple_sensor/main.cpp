@@ -144,4 +144,8 @@ void loop() {
 #ifdef DISPLAY_CLASS
   ui_task.loop();
 #endif
+
+#ifdef NRF52_PLATFORM
+  board.loop(); // Hybrid sleep management for power optimization
+#endif
 }

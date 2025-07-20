@@ -1028,4 +1028,8 @@ void loop() {
 
   the_mesh.loop();
   sensors.loop();
+  
+#ifdef NRF52_PLATFORM
+  board.loop(); // Hybrid sleep management for power optimization
+#endif
 }
