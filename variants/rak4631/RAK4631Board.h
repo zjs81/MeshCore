@@ -2,6 +2,7 @@
 
 #include <MeshCore.h>
 #include <Arduino.h>
+#include <helpers/NRFAdcCalibration.h>
 
 // LoRa radio module pins for RAK4631
 #define  P_LORA_DIO_1   47
@@ -48,7 +49,10 @@ public:
     }
     raw = raw / BATTERY_SAMPLES;
 
-    return (ADC_MULTIPLIER * raw) / 4096;
+    // ADC_MULTIPLIER = (3 * 1.73 * 1.187 * 1000) = 6158.31
+    // Convert to board multiplier: 6158.31 / 1000 = 6.158 (since rawToMilliVolts handles *1000)
+    const float boardMultiplier = ADC_MULTIPLIER / 1000.0f;
+    return NRFAdcCalibration::rawToMilliVolts(raw, boardMultiplier, 3.0f);
   }
 
   const char* getManufacturerName() const override {

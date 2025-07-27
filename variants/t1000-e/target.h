@@ -20,6 +20,18 @@ class T1000SensorManager: public SensorManager {
   void sleep_gps();
   void stop_gps();
   void cycleGpsPower();
+  
+  // GPS power optimization settings
+  uint32_t getGPSSleepDuration();  // Battery-aware sleep duration
+  bool shouldSkipGPSCycle();       // Skip GPS when very low battery
+  
+  // Environmental sensor caching and power optimization
+  float cached_temperature = 0.0f;
+  uint32_t cached_light = 0;
+  uint32_t last_sensor_read = 0;
+  uint32_t getSensorReadInterval();  // Battery-aware sensor reading interval
+  void updateEnvironmentalSensors(); // Actually read sensors when needed
+  
 public:
   T1000SensorManager(LocationProvider &nmea): _nmea(&nmea) { }
   bool begin() override;

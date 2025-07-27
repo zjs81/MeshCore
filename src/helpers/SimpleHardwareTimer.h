@@ -17,7 +17,7 @@ private:
   
 public:
   static void init();
-  static void start(uint32_t timeout_ms);
+  static bool start(uint32_t timeout_ms);  // Returns true on success, false on error
   static void stop();
   static bool isExpired() { return timer_expired; }
   static void rtc_handler();

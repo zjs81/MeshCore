@@ -30,7 +30,18 @@ void NanoG2Ultra::begin()
   
   // Set low power mode and optimize CPU frequency  
   sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
+  // Perform one-time ADC calibration for accurate battery monitoring
+  NRFAdcCalibration::performBootCalibration();
+  
   Serial.printf("DEBUG: Nano G2 Ultra - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+
+#ifdef MAX_CONTACTS
+  // Initialize BLE callbacks for sleep management
+  Bluefruit.Periph.setConnectCallback(connect_callback);
+  Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
+  
+  Serial.println("DEBUG: BLE callbacks registered for sleep management");
+#endif
 
   // set user button
   pinMode(PIN_BUTTON1, INPUT);
@@ -44,9 +55,6 @@ void NanoG2Ultra::begin()
   digitalWrite(SX126X_POWER_EN, HIGH);
 
   delay(10);
-  
-  // Initialize NRF sleep management
-  NRFSleep::init();
 }
 
 void NanoG2Ultra::loop() {

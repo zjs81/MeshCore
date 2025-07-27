@@ -6,12 +6,14 @@ PacketQueue::PacketQueue(int max_entries) {
   _schedule_table = new uint32_t[max_entries];
   _size = max_entries;
   _num = 0;
+  _head = 0;  // Add circular buffer support
 }
 
 int PacketQueue::countBefore(uint32_t now) const {
   int n = 0;
   for (int j = 0; j < _num; j++) {
-    if (_schedule_table[j] > now) continue;   // scheduled for future... ignore for now
+    int idx = (_head + j) % _size;
+    if (_schedule_table[idx] > now) continue;   // scheduled for future... ignore for now
     n++;
   }
   return n;
@@ -20,38 +22,60 @@ int PacketQueue::countBefore(uint32_t now) const {
 mesh::Packet* PacketQueue::get(uint32_t now) {
   uint8_t min_pri = 0xFF;
   int best_idx = -1;
+  int best_pos = -1;
+  
   for (int j = 0; j < _num; j++) {
-    if (_schedule_table[j] > now) continue;   // scheduled for future... ignore for now
-    if (_pri_table[j] < min_pri) {  // select most important priority amongst non-future entries
-      min_pri = _pri_table[j];
-      best_idx = j;
+    int idx = (_head + j) % _size;
+    if (_schedule_table[idx] > now) continue;   // scheduled for future... ignore for now
+    if (_pri_table[idx] < min_pri) {  // select most important priority amongst non-future entries
+      min_pri = _pri_table[idx];
+      best_idx = idx;
+      best_pos = j;
     }
   }
   if (best_idx < 0) return NULL;   // empty, or all items are still in the future
 
   mesh::Packet* top = _table[best_idx];
-  int i = best_idx;
-  _num--;
-  while (i < _num) {
-    _table[i] = _table[i+1];
-    _pri_table[i] = _pri_table[i+1];
-    _schedule_table[i] = _schedule_table[i+1];
-    i++;
+  
+  // Optimized removal - use circular buffer approach to minimize data movement
+  if (best_pos == 0) {
+    // Removing head element - just advance head pointer
+    _head = (_head + 1) % _size;
+  } else {
+    // Shift only the elements before the removed item
+    for (int i = best_pos; i > 0; i--) {
+      int dst_idx = (_head + i) % _size;
+      int src_idx = (_head + i - 1) % _size;
+      _table[dst_idx] = _table[src_idx];
+      _pri_table[dst_idx] = _pri_table[src_idx];
+      _schedule_table[dst_idx] = _schedule_table[src_idx];
+    }
+    _head = (_head + 1) % _size;
   }
+  _num--;
   return top;
 }
 
 mesh::Packet* PacketQueue::removeByIdx(int i) {
   if (i >= _num) return NULL;  // invalid index
 
-  mesh::Packet* item = _table[i];
-  _num--;
-  while (i < _num) {
-    _table[i] = _table[i+1];
-    _pri_table[i] = _pri_table[i+1];
-    _schedule_table[i] = _schedule_table[i+1];
-    i++;
+  int actual_idx = (_head + i) % _size;
+  mesh::Packet* item = _table[actual_idx];
+  
+  // Optimized removal similar to get()
+  if (i == 0) {
+    _head = (_head + 1) % _size;
+  } else {
+    for (int j = i; j > 0; j--) {
+      int dst_idx = (_head + j) % _size;
+      int src_idx = (_head + j - 1) % _size;
+      _table[dst_idx] = _table[src_idx];
+      _pri_table[dst_idx] = _pri_table[src_idx];
+      _schedule_table[dst_idx] = _schedule_table[src_idx];
+    }
+    _head = (_head + 1) % _size;
   }
+  _num--;
   return item;
 }
 
@@ -60,10 +84,18 @@ void PacketQueue::add(mesh::Packet* packet, uint8_t priority, uint32_t scheduled
     // TODO: log "FATAL: queue is full!"
     return;
   }
-  _table[_num] = packet;
-  _pri_table[_num] = priority;
-  _schedule_table[_num] = scheduled_for;
+  
+  int idx = (_head + _num) % _size;
+  _table[idx] = packet;
+  _pri_table[idx] = priority;
+  _schedule_table[idx] = scheduled_for;
   _num++;
+}
+
+mesh::Packet* PacketQueue::itemAt(int i) {
+  if (i >= _num) return NULL;
+  int idx = (_head + i) % _size;
+  return _table[idx];
 }
 
 StaticPoolPacketManager::StaticPoolPacketManager(int pool_size): unused(pool_size), send_queue(pool_size), rx_queue(pool_size) {
@@ -110,4 +142,8 @@ void StaticPoolPacketManager::queueInbound(mesh::Packet* packet, uint32_t schedu
 }
 mesh::Packet* StaticPoolPacketManager::getNextInbound(uint32_t now) {
   return rx_queue.get(now);
+}
+
+int StaticPoolPacketManager::getInboundCount(uint32_t now) const {
+  return rx_queue.countBefore(now);
 }

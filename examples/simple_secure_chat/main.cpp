@@ -3,8 +3,10 @@
 
 #if defined(NRF52_PLATFORM)
   #include <InternalFileSystem.h>
+  #include <helpers/NRFSleep.h>
 #elif defined(RP2040_PLATFORM)
   #include <LittleFS.h>
+  #include <helpers/NRFSleep.h>
 #elif defined(ESP32)
   #include <SPIFFS.h>
 #endif
@@ -566,9 +568,17 @@ void setup() {
 #if defined(NRF52_PLATFORM)
   InternalFS.begin();
   the_mesh.begin(InternalFS);
+  // Update NRFSleep with dispatcher reference for full packet queue awareness
+  NRFSleep::setDispatcher(&the_mesh);
+  // 🚀 Adaptive duty cycling now enabled by default for production reliability!
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
   the_mesh.begin(LittleFS);
+  // Update NRFSleep with dispatcher reference for full packet queue awareness (if on NRF52)
+  #ifdef NRF52_PLATFORM
+  NRFSleep::setDispatcher(&the_mesh);
+  // 🚀 Adaptive duty cycling now enabled by default for production reliability!
+  #endif
 #elif defined(ESP32)
   SPIFFS.begin(true);
   the_mesh.begin(SPIFFS);
@@ -586,9 +596,19 @@ void setup() {
 }
 
 void loop() {
+  // Cache current time to avoid multiple calls and optimize processing
+  static unsigned long last_board_loop = 0;
+  
+  unsigned long current_millis = millis();
+  
+  // Main mesh processing - always run as it handles critical radio operations
   the_mesh.loop();
   
 #ifdef NRF52_PLATFORM
-  board.loop(); // Hybrid sleep management for power optimization
+  // Power management - only every 10ms to balance power savings with responsiveness
+  if (current_millis - last_board_loop >= 10) {
+    board.loop(); // Hybrid sleep management for power optimization
+    last_board_loop = current_millis;
+  }
 #endif
 }

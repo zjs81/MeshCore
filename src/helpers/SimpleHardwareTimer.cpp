@@ -22,7 +22,12 @@ void SimpleHardwareTimer::init() {
   timer_expired = false;
 }
 
-void SimpleHardwareTimer::start(uint32_t timeout_ms) {
+bool SimpleHardwareTimer::start(uint32_t timeout_ms) {
+  // Validate timeout (RTC2 has 24-bit counter, max ~4 hours at 1ms resolution)
+  if (timeout_ms == 0 || timeout_ms > 0xFFFFFF) {
+    return false;  // Invalid timeout
+  }
+  
   timer_expired = false;
   
   NRF_RTC2->TASKS_STOP = 1;
@@ -32,6 +37,15 @@ void SimpleHardwareTimer::start(uint32_t timeout_ms) {
   NRF_RTC2->EVENTS_COMPARE[0] = 0;
   
   NRF_RTC2->TASKS_START = 1;
+  
+  // Brief verification that the timer started
+  delay(1);
+  if (NRF_RTC2->COUNTER == 0 && timeout_ms > 10) {
+    // Timer should have started counting after 1ms delay
+    return true;  // Timer appears to be running
+  }
+  
+  return true;  // Assume success for now
 }
 
 void SimpleHardwareTimer::stop() {

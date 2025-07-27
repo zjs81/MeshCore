@@ -2,6 +2,7 @@
 
 #include <MeshCore.h>
 #include <Arduino.h>
+#include <helpers/NRFAdcCalibration.h>
 
 class SenseCapSolarBoard : public mesh::MainBoard {
 protected:
@@ -23,12 +24,19 @@ public:
 
   uint16_t getBattMilliVolts() override {
     digitalWrite(VBAT_ENABLE, LOW);
-    int adcvalue = 0;
     analogReadResolution(12);
     analogReference(AR_INTERNAL_3_0);
     delay(10);
-    adcvalue = analogRead(BATTERY_PIN);
-    return (adcvalue * ADC_MULTIPLIER * AREF_VOLTAGE) / 4.096;
+    
+    uint32_t raw = 0;
+    for (int i = 0; i < 8; i++) {
+      raw += analogRead(BATTERY_PIN);
+    }
+    raw = raw / 8;
+    
+    // Fixed: boardMultiplier should just be the voltage divider ratio
+    const float boardMultiplier = ADC_MULTIPLIER;
+    return NRFAdcCalibration::rawToMilliVolts(raw, boardMultiplier, AREF_VOLTAGE);
   }
 
   const char* getManufacturerName() const override {

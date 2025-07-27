@@ -16,6 +16,9 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/CommonCLI.h>
+#ifdef NRF52_PLATFORM
+  #include <helpers/NRFSleep.h>
+#endif
 #include <RTClib.h>
 #include <target.h>
 
@@ -1021,6 +1024,13 @@ void setup() {
 
   the_mesh.begin(fs);
 
+#ifdef NRF52_PLATFORM
+  // CRITICAL: Disable duty cycling for room servers to ensure maximum packet reception
+  // Servers need 100% RX uptime to reliably serve clients and handle requests
+  NRFSleep::disableDutyCycle();
+  Serial.println("INFO: Room Server configured for continuous RX (no duty cycling)");
+#endif
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
@@ -1030,12 +1040,21 @@ void setup() {
 }
 
 void loop() {
-  int len = strlen(command);
+  // Cache current time to avoid multiple calls and optimize serial processing
+  static unsigned long last_sensor_loop = 0;
+  static unsigned long last_board_loop = 0;
+  static char* command_ptr = command; // Cache command buffer pointer
+  
+  unsigned long current_millis = millis();
+  
+  // Process serial input with optimized approach
+  int len = command_ptr - command; // Use pointer arithmetic instead of strlen
   while (Serial.available() && len < sizeof(command)-1) {
     char c = Serial.read();
     if (c != '\n') {
-      command[len++] = c;
-      command[len] = 0;
+      *command_ptr++ = c;
+      *command_ptr = 0;
+      len++;
     }
     Serial.print(c);
   }
@@ -1051,13 +1070,25 @@ void loop() {
       Serial.print("  -> "); Serial.println(reply);
     }
 
-    command[0] = 0;  // reset command buffer
+    // Reset command buffer efficiently
+    command_ptr = command;
+    *command_ptr = 0;
   }
 
+  // Main mesh processing - always run as it handles critical radio operations
   the_mesh.loop();
-  sensors.loop();
+  
+  // Sensors - only check every 100ms to reduce CPU load
+  if (current_millis - last_sensor_loop >= 100) {
+    sensors.loop();
+    last_sensor_loop = current_millis;
+  }
   
 #ifdef NRF52_PLATFORM
-  board.loop(); // Hybrid sleep management for power optimization
+  // Power management - only every 10ms to balance power savings with responsiveness
+  if (current_millis - last_board_loop >= 10) {
+    board.loop(); // Hybrid sleep management for power optimization
+    last_board_loop = current_millis;
+  }
 #endif
 }

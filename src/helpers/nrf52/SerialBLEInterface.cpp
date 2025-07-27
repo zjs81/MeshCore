@@ -1,4 +1,5 @@
 #include "SerialBLEInterface.h"
+#include "../NRFSleep.h"
 
 static SerialBLEInterface* instance;
 
@@ -8,6 +9,8 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
     instance->_isDeviceConnected = true;
     // no need to stop advertising on connect, as the ble stack does this automatically
   }
+  // Notify NRFSleep about BLE activity to prevent sleep for 10 seconds
+  NRFSleep::notifyBLEActivity();
 }
 
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {

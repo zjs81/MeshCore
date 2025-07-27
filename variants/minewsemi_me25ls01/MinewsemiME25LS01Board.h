@@ -2,6 +2,7 @@
 
 #include <MeshCore.h>
 #include <Arduino.h>
+#include <helpers/NRFAdcCalibration.h>
 
 // LoRa and SPI pins
 
@@ -39,7 +40,10 @@ public:
       raw += analogRead(PIN_VBAT_READ);
     }
     raw = raw / BATTERY_SAMPLES;
-    return (ADC_MULTIPLIER * raw);
+    
+    // Fixed: Use the voltage divider multiplier directly  
+    const float boardMultiplier = ADC_MULTIPLIER;
+    return NRFAdcCalibration::rawToMilliVolts(raw, boardMultiplier, 3.0f);
   }
 
   uint8_t getStartupReason() const override { return startup_reason; }

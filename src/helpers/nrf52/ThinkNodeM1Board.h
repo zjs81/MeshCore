@@ -2,6 +2,7 @@
 
 #include <MeshCore.h>
 #include <Arduino.h>
+#include <helpers/NRFAdcCalibration.h>
 
 // LoRa radio module pins for Elecrow ThinkNode M1
 #define  P_LORA_DIO_1     20

@@ -40,6 +40,9 @@ uint32_t Dispatcher::getCADFailMaxDuration() const {
 }
 
 void Dispatcher::loop() {
+  // Cache current time to avoid multiple expensive millis() calls
+  unsigned long current_millis = _ms->getMillis();
+  
   if (millisHasNowPassed(next_floor_calib_time)) {
     _radio->triggerNoiseFloorCalibrate(getInterferenceThreshold());
     next_floor_calib_time = futureMillis(NOISE_FLOOR_CALIB_INTERVAL);
@@ -51,16 +54,16 @@ void Dispatcher::loop() {
   if (is_recv != prev_isrecv_mode) {
     prev_isrecv_mode = is_recv;
     if (!is_recv) {
-      radio_nonrx_start = _ms->getMillis();
+      radio_nonrx_start = current_millis;  // Use cached time
     }
   }
-  if (!is_recv && _ms->getMillis() - radio_nonrx_start > 8000) {   // radio has not been in Rx mode for 8 seconds!
+  if (!is_recv && current_millis - radio_nonrx_start > 8000) {   // radio has not been in Rx mode for 8 seconds!
     _err_flags |= ERR_EVENT_STARTRX_TIMEOUT;
   }
 
   if (outbound) {  // waiting for outbound send to be completed
     if (_radio->isSendComplete()) {
-      long t = _ms->getMillis() - outbound_start;
+      long t = current_millis - outbound_start;  // Use cached time
       total_air_time += t;  // keep track of how much air time we are using
       //Serial.print("  airtime="); Serial.println(t);
 
@@ -97,9 +100,9 @@ void Dispatcher::loop() {
     next_agc_reset_time = futureMillis(getAGCResetInterval());
   }
 
-  // check inbound (delayed) queue
+  // check inbound (delayed) queue - use cached time
   {
-    Packet* pkt = _mgr->getNextInbound(_ms->getMillis());
+    Packet* pkt = _mgr->getNextInbound(current_millis);
     if (pkt) {
       processRecvPacket(pkt);
     }
@@ -223,14 +226,18 @@ void Dispatcher::processRecvPacket(Packet* pkt) {
 }
 
 void Dispatcher::checkSend() {
-  if (_mgr->getOutboundCount(_ms->getMillis()) == 0) return;  // nothing waiting to send
+  // Cache current time to avoid multiple expensive calls
+  unsigned long current_millis = _ms->getMillis();
+  
+  if (_mgr->getOutboundCount(current_millis) == 0) return;  // nothing waiting to send
   if (!millisHasNowPassed(next_tx_time)) return;   // still in 'radio silence' phase (from airtime budget setting)
+  
   if (_radio->isReceiving()) {   // LBT - check if radio is currently mid-receive, or if channel activity
     if (cad_busy_start == 0) {
-      cad_busy_start = _ms->getMillis();   // record when CAD busy state started
+      cad_busy_start = current_millis;   // record when CAD busy state started
     }
 
-    if (_ms->getMillis() - cad_busy_start > getCADFailMaxDuration()) {
+    if (current_millis - cad_busy_start > getCADFailMaxDuration()) {
       _err_flags |= ERR_EVENT_CAD_TIMEOUT;
 
       MESH_DEBUG_PRINTLN("%s Dispatcher::checkSend(): CAD busy max duration reached!", getLogDateTime());
@@ -243,54 +250,23 @@ void Dispatcher::checkSend() {
   }
   cad_busy_start = 0;  // reset busy state
 
-  outbound = _mgr->getNextOutbound(_ms->getMillis());
+  outbound = _mgr->getNextOutbound(current_millis);
   if (outbound) {
-    int len = 0;
-    uint8_t raw[MAX_TRANS_UNIT];
+    uint8_t raw[MAX_TRANS_UNIT+1];
+    int len = outbound->writeTo(raw);
+    logRx(outbound, len, 0);  // log at send time (for consistency with manual re-transmission command)
 
-#ifdef NODE_ID
-    raw[len++] = NODE_ID;
-#endif
-    raw[len++] = outbound->header;
-    if (outbound->hasTransportCodes()) {
-      memcpy(&raw[len], &outbound->transport_codes[0], 2); len += 2;
-      memcpy(&raw[len], &outbound->transport_codes[1], 2); len += 2;
-    }
-    raw[len++] = outbound->path_len;
-    memcpy(&raw[len], outbound->path, outbound->path_len); len += outbound->path_len;
+    // will need radio silence up to next_tx_time
+    uint32_t est_airtime = _radio->getEstAirtimeFor(len);
+    outbound_start = current_millis;  // Use cached time
+    outbound_expiry = futureMillis(est_airtime * 10);   // 10x should be plenty
+    next_tx_time = futureMillis(est_airtime * getAirtimeBudgetFactor());
 
-    if (len + outbound->payload_len > MAX_TRANS_UNIT) {
-      MESH_DEBUG_PRINTLN("%s Dispatcher::checkSend(): FATAL: Invalid packet queued... too long, len=%d", getLogDateTime(), len + outbound->payload_len);
-      _mgr->free(outbound);
+    if (!_radio->startSendRaw(raw, len)) {
+      MESH_DEBUG_PRINTLN("%s Dispatcher::checkSend(): send failed!", getLogDateTime());
+      logTxFail(outbound, len);
+      releasePacket(outbound);  // return to pool
       outbound = NULL;
-    } else {
-      memcpy(&raw[len], outbound->payload, outbound->payload_len); len += outbound->payload_len;
-
-      uint32_t max_airtime = _radio->getEstAirtimeFor(len)*3/2;
-      outbound_start = _ms->getMillis();
-      bool success = _radio->startSendRaw(raw, len);
-      if (!success) {
-        MESH_DEBUG_PRINTLN("%s Dispatcher::loop(): ERROR: send start failed!", getLogDateTime());
-
-        logTxFail(outbound, outbound->getRawLength());
-  
-        releasePacket(outbound);  // return to pool
-        outbound = NULL;
-        return;
-      }
-      outbound_expiry = futureMillis(max_airtime);
-
-    #if MESH_PACKET_LOGGING
-      Serial.print(getLogDateTime());
-      Serial.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)", 
-            len, outbound->getPayloadType(), outbound->isRouteDirect() ? "D" : "F", outbound->payload_len);
-      if (outbound->getPayloadType() == PAYLOAD_TYPE_PATH || outbound->getPayloadType() == PAYLOAD_TYPE_REQ
-        || outbound->getPayloadType() == PAYLOAD_TYPE_RESPONSE || outbound->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
-        Serial.printf(" [%02X -> %02X]\n", (uint32_t)outbound->payload[1], (uint32_t)outbound->payload[0]);
-      } else {
-        Serial.printf("\n");
-      }
-    #endif
     }
   }
 }

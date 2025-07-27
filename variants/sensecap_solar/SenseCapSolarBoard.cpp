@@ -40,8 +40,16 @@ void SenseCapSolarBoard::begin() {
 
   delay(10);   // give sx1262 some time to power up
   
-  // Initialize NRF sleep management
-  NRFSleep::init();
+  // Perform one-time ADC calibration for accurate battery monitoring
+  NRFAdcCalibration::performBootCalibration();
+
+#ifdef MAX_CONTACTS
+  // Initialize BLE callbacks for sleep management
+  Bluefruit.Periph.setConnectCallback(connect_callback);
+  Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
+  
+  Serial.println("DEBUG: BLE callbacks registered for sleep management");
+#endif
 }
 
 void SenseCapSolarBoard::loop() {

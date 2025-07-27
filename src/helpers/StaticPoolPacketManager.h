@@ -6,7 +6,7 @@ class PacketQueue {
   mesh::Packet** _table;
   uint8_t* _pri_table;
   uint32_t* _schedule_table;
-  int _size, _num;
+  int _size, _num, _head;  // Added _head for circular buffer
 
 public:
   PacketQueue(int max_entries);
@@ -14,7 +14,7 @@ public:
   void add(mesh::Packet* packet, uint8_t priority, uint32_t scheduled_for);
   int count() const { return _num; }
   int countBefore(uint32_t now) const;
-  mesh::Packet* itemAt(int i) const { return _table[i]; }
+  mesh::Packet* itemAt(int i);  // Removed const and fixed to support circular buffer
   mesh::Packet* removeByIdx(int i);
 };
 
@@ -34,4 +34,5 @@ public:
   mesh::Packet* removeOutboundByIdx(int i) override;
   void queueInbound(mesh::Packet* packet, uint32_t scheduled_for) override;
   mesh::Packet* getNextInbound(uint32_t now) override;
+  int getInboundCount(uint32_t now) const override;
 };

@@ -13,6 +13,9 @@ static void connect_callback(uint16_t conn_handle)
 {
   (void)conn_handle;
   MESH_DEBUG_PRINTLN("BLE client connected");
+  
+  NRFSleep::notifyBLEActivity();
+  NRFSleep::notifyBLEConnectionAttempt();
 }
 
 static void disconnect_callback(uint16_t conn_handle, uint8_t reason)
@@ -23,11 +26,19 @@ static void disconnect_callback(uint16_t conn_handle, uint8_t reason)
   MESH_DEBUG_PRINTLN("BLE client disconnected");
 }
 
-void XiaoNrf52Board::begin() {
-  // for future use, sub-classes SHOULD call this from their begin()
-  startup_reason = BD_STARTUP_NORMAL;
+// Callback for BLE security parameter requests - indicates incoming connection attempt
+static void security_request_callback(uint16_t conn_handle, ble_gap_evt_sec_params_request_t const * p_request)
+{
+  (void)conn_handle;
+  (void)p_request;
+  MESH_DEBUG_PRINTLN("BLE security params requested - connection attempt");
+  
+  // Notify NRFSleep about connection attempt to prevent sleep for 10 seconds
+  NRFSleep::notifyBLEConnectionAttempt();
+}
 
-  // Set low power mode and initialize power management
+void XiaoNrf52Board::begin() {
+  startup_reason = BD_STARTUP_NORMAL;
   sd_power_mode_set(NRF_POWER_MODE_LOWPWR);
   
   pinMode(PIN_VBAT, INPUT);
@@ -49,9 +60,23 @@ void XiaoNrf52Board::begin() {
 //  digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
   
-  // Initialize NRF sleep management
-  NRFSleep::init();
+  // Perform one-time ADC calibration for accurate battery monitoring
+  NRFAdcCalibration::performBootCalibration();
+  
   Serial.printf("DEBUG: XIAO NRF52 - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+
+#ifdef MAX_CONTACTS
+  // Initialize BLE callbacks for sleep management
+  Bluefruit.Periph.setConnectCallback(connect_callback);
+  Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
+  
+  // Register security callback to catch connection attempts
+  Bluefruit.Security.setIOCaps(BLE_GAP_IO_CAPS_NONE);
+  Bluefruit.Security.setMITM(false);
+  Bluefruit.Security.setBondStorage(false);
+  
+  Serial.println("DEBUG: BLE callbacks registered for sleep management");
+#endif
 }
 
 void XiaoNrf52Board::loop() {

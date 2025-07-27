@@ -12,6 +12,9 @@ static BLEDfu bledfu;
 static void connect_callback(uint16_t conn_handle) {
   (void)conn_handle;
   MESH_DEBUG_PRINTLN("BLE client connected");
+  
+  // Notify NRFSleep about BLE activity to prevent sleep for 10 seconds
+  NRFSleep::notifyBLEActivity();
 }
 
 static void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
@@ -34,9 +37,18 @@ void TechoBoard::begin() {
   digitalWrite(SX126X_POWER_EN, HIGH);
   delay(10);   // give sx1262 some time to power up
   
-  // Initialize NRF sleep management
-  NRFSleep::init();
+  // Perform one-time ADC calibration for accurate battery monitoring
+  NRFAdcCalibration::performBootCalibration();
+  
   Serial.printf("DEBUG: Techo - CPU running at %dMHz for power optimization\n", VARIANT_MCK / 1000000);
+
+#ifdef MAX_CONTACTS
+  // Initialize BLE callbacks for sleep management
+  Bluefruit.Periph.setConnectCallback(connect_callback);
+  Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
+  
+  Serial.println("DEBUG: BLE callbacks registered for sleep management");
+#endif
 }
 
 void TechoBoard::loop() {
@@ -45,17 +57,20 @@ void TechoBoard::loop() {
 }
 
 uint16_t TechoBoard::getBattMilliVolts() {
-  int adcvalue = 0;
-
   analogReference(AR_INTERNAL_3_0);
   analogReadResolution(12);
   delay(10);
 
-  // ADC range is 0..3000mV and resolution is 12-bit (0..4095)
-  adcvalue = analogRead(PIN_VBAT_READ);
-  // Convert the raw value to compensated mv, taking the resistor-
-  // divider into account (providing the actual LIPO voltage)
-  return (uint16_t)((float)adcvalue * REAL_VBAT_MV_PER_LSB);
+  uint32_t raw = 0;
+  for (int i = 0; i < 8; i++) {
+    raw += analogRead(PIN_VBAT_READ);
+  }
+  raw = raw / 8;
+
+  // Original formula used REAL_VBAT_MV_PER_LSB
+  // Convert to board multiplier for calibrated calculation
+  const float boardMultiplier = REAL_VBAT_MV_PER_LSB / (3000.0f / 4096.0f);
+  return NRFAdcCalibration::rawToMilliVolts(raw, boardMultiplier, 3.0f);
 }
 
 bool TechoBoard::startOTAUpdate(const char* id, char reply[]) {

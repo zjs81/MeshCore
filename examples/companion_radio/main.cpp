@@ -2,6 +2,10 @@
 #include <Mesh.h>
 #include "MyMesh.h"
 
+#ifdef NRF52_PLATFORM
+#include <helpers/NRFSleep.h>
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -119,6 +123,12 @@ void setup() {
     #endif
   );
 
+#ifdef NRF52_PLATFORM
+  // Update NRFSleep with dispatcher reference for full packet queue awareness
+  NRFSleep::setDispatcher(&the_mesh);
+  // 🚀 Adaptive duty cycling now enabled by default for production reliability!
+#endif
+
 #ifdef BLE_PIN_CODE
   char dev_name[32+16];
   sprintf(dev_name, "%s%s", BLE_NAME_PREFIX, the_mesh.getNodeName());
@@ -191,13 +201,37 @@ void setup() {
 }
 
 void loop() {
+  // Cache current time to avoid multiple calls
+  static unsigned long last_mesh_loop = 0;
+  static unsigned long last_sensor_loop = 0;
+  static unsigned long last_ui_loop = 0;
+  static unsigned long last_board_loop = 0;
+  
+  unsigned long current_millis = millis();
+  
+  // Main mesh processing - always run as it handles critical radio operations
   the_mesh.loop();
-  sensors.loop();
+  last_mesh_loop = current_millis;
+  
+  // Sensors - only check every 100ms to reduce CPU load
+  if (current_millis - last_sensor_loop >= 100) {
+    sensors.loop();
+    last_sensor_loop = current_millis;
+  }
+  
 #ifdef DISPLAY_CLASS
-  ui_task.loop();
+  // UI updates - only every 50ms for smooth display updates
+  if (current_millis - last_ui_loop >= 50) {
+    ui_task.loop();
+    last_ui_loop = current_millis;
+  }
 #endif
   
 #ifdef NRF52_PLATFORM
-  board.loop(); // Automatic light sleep power management (NRF only)
+  // Power management - only every 10ms to balance power savings with responsiveness
+  if (current_millis - last_board_loop >= 10) {
+    board.loop(); // Automatic light sleep power management (NRF only)
+    last_board_loop = current_millis;
+  }
 #endif
 }

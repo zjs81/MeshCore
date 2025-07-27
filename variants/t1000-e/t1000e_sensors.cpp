@@ -117,3 +117,32 @@ uint32_t t1000e_get_light( void )
  
     return lux;
 }
+
+// Power-optimized combined sensor reading - single power cycle for both sensors
+T1000eSensorReading t1000e_get_sensors_combined( void )
+{
+    T1000eSensorReading result;
+    unsigned int ntc_v, vcc_v, lux_v;
+
+    // Single power-on cycle for both sensors
+    digitalWrite(PIN_3V3_EN, HIGH);
+    digitalWrite(SENSOR_EN, HIGH);
+    analogReference(AR_INTERNAL_3_0);
+    analogReadResolution(12);
+    delay(10);
+    
+    // Read all sensor values while powered
+    vcc_v = (1000.0*(analogRead(BATTERY_PIN) * ADC_MULTIPLIER * AREF_VOLTAGE)) / 4096;
+    ntc_v = (1000.0 * AREF_VOLTAGE * analogRead(TEMP_SENSOR)) / 4096;
+    lux_v = 1000 * analogRead(LUX_SENSOR) * AREF_VOLTAGE / 4096;
+    
+    // Single power-off cycle
+    digitalWrite(PIN_3V3_EN, LOW);
+    digitalWrite(SENSOR_EN, LOW);
+
+    // Process the readings
+    result.temperature = get_heater_temperature(vcc_v, ntc_v);
+    result.light = get_light_lv(lux_v);
+    
+    return result;
+}

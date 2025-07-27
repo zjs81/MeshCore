@@ -16,6 +16,10 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/CommonCLI.h>
+#include <helpers/BufferedLogger.h>  // Add buffered logging support
+#ifdef NRF52_PLATFORM
+  #include <helpers/NRFSleep.h>
+#endif
 #include <RTClib.h>
 #include <target.h>
 
@@ -125,7 +129,7 @@ struct NeighbourInfo {
 class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   FILESYSTEM* _fs;
   unsigned long next_local_advert, next_flood_advert;
-  bool _logging;
+  BufferedLogger* _packet_logger;  // Replace boolean _logging with buffered logger
   NodePrefs _prefs;
   CommonCLI _cli;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
@@ -277,51 +281,18 @@ protected:
   }
 
   void logRx(mesh::Packet* pkt, int len, float score) override {
-    if (_logging) {
-      File f = openAppend(PACKET_LOG_FILE);
-      if (f) {
-        f.print(getLogDateTime());
-        f.printf(": RX, len=%d (type=%d, route=%s, payload_len=%d) SNR=%d RSSI=%d score=%d",
-          len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len,
-          (int)_radio->getLastSNR(), (int)_radio->getLastRSSI(), (int)(score*1000));
-
-        if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH || pkt->getPayloadType() == PAYLOAD_TYPE_REQ
-          || pkt->getPayloadType() == PAYLOAD_TYPE_RESPONSE || pkt->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
-          f.printf(" [%02X -> %02X]\n", (uint32_t)pkt->payload[1], (uint32_t)pkt->payload[0]);
-        } else {
-          f.printf("\n");
-        }
-        f.close();
-      }
+    if (_packet_logger) {
+      _packet_logger->logRx(pkt, len, score);
     }
   }
   void logTx(mesh::Packet* pkt, int len) override {
-    if (_logging) {
-      File f = openAppend(PACKET_LOG_FILE);
-      if (f) {
-        f.print(getLogDateTime());
-        f.printf(": TX, len=%d (type=%d, route=%s, payload_len=%d)",
-          len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
-
-        if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH || pkt->getPayloadType() == PAYLOAD_TYPE_REQ
-          || pkt->getPayloadType() == PAYLOAD_TYPE_RESPONSE || pkt->getPayloadType() == PAYLOAD_TYPE_TXT_MSG) {
-          f.printf(" [%02X -> %02X]\n", (uint32_t)pkt->payload[1], (uint32_t)pkt->payload[0]);
-        } else {
-          f.printf("\n");
-        }
-        f.close();
-      }
+    if (_packet_logger) {
+      _packet_logger->logTx(pkt, len);
     }
   }
   void logTxFail(mesh::Packet* pkt, int len) override {
-    if (_logging) {
-      File f = openAppend(PACKET_LOG_FILE);
-      if (f) {
-        f.print(getLogDateTime());
-        f.printf(": TX FAIL!, len=%d (type=%d, route=%s, payload_len=%d)\n",
-          len, pkt->getPayloadType(), pkt->isRouteDirect() ? "D" : "F", pkt->payload_len);
-        f.close();
-      }
+    if (_packet_logger) {
+      _packet_logger->logTxFail(pkt, len);
     }
   }
 
@@ -564,7 +535,7 @@ public:
     memset(known_clients, 0, sizeof(known_clients));
     next_local_advert = next_flood_advert = 0;
     set_radio_at = revert_radio_at = 0;
-    _logging = false;
+    _packet_logger = nullptr;
 
   #if MAX_NEIGHBOURS
     memset(neighbours, 0, sizeof(neighbours));
@@ -662,10 +633,22 @@ public:
     }
   }
 
-  void setLoggingOn(bool enable) override { _logging = enable; }
+  void setLoggingOn(bool enable) override { 
+    if (enable && !_packet_logger) {
+      _packet_logger = new BufferedLogger(_fs, PACKET_LOG_FILE);
+      _packet_logger->setEnabled(true);
+    } else if (!enable && _packet_logger) {
+      delete _packet_logger;
+      _packet_logger = nullptr;
+    }
+  }
 
   void eraseLogFile() override {
-    _fs->remove(PACKET_LOG_FILE);
+    if (_packet_logger) {
+      _packet_logger->clear();
+    } else {
+      _fs->remove(PACKET_LOG_FILE);
+    }
   }
 
   void dumpLogFile() override {
@@ -737,6 +720,11 @@ public:
 
   void loop() {
     mesh::Mesh::loop();
+
+    // Handle buffered logging
+    if (_packet_logger) {
+      _packet_logger->loop();
+    }
 
     if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
       mesh::Packet* pkt = createSelfAdvert();
@@ -834,6 +822,13 @@ void setup() {
 
   the_mesh.begin(fs);
 
+#ifdef NRF52_PLATFORM
+  // CRITICAL: Disable duty cycling for repeaters to ensure maximum packet reception
+  // Repeaters need 100% RX uptime to reliably forward mesh traffic
+  NRFSleep::disableDutyCycle();
+  Serial.println("INFO: Repeater configured for continuous RX (no duty cycling)");
+#endif
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
@@ -843,12 +838,21 @@ void setup() {
 }
 
 void loop() {
-  int len = strlen(command);
+  // Cache current time to avoid multiple calls and optimize serial processing
+  static unsigned long last_sensor_loop = 0;
+  static unsigned long last_board_loop = 0;
+  static char* command_ptr = command; // Cache command buffer pointer
+  
+  unsigned long current_millis = millis();
+  
+  // Process serial input with optimized approach
+  int len = command_ptr - command; // Use pointer arithmetic instead of strlen
   while (Serial.available() && len < sizeof(command)-1) {
     char c = Serial.read();
     if (c != '\n') {
-      command[len++] = c;
-      command[len] = 0;
+      *command_ptr++ = c;
+      *command_ptr = 0;
+      len++;
     }
     Serial.print(c);
   }
@@ -864,13 +868,25 @@ void loop() {
       Serial.print("  -> "); Serial.println(reply);
     }
 
-    command[0] = 0;  // reset command buffer
+    // Reset command buffer efficiently
+    command_ptr = command;
+    *command_ptr = 0;
   }
 
+  // Main mesh processing - always run as it handles critical radio operations
   the_mesh.loop();
-  sensors.loop();
+  
+  // Sensors - only check every 100ms to reduce CPU load  
+  if (current_millis - last_sensor_loop >= 100) {
+    sensors.loop();
+    last_sensor_loop = current_millis;
+  }
   
 #ifdef NRF52_PLATFORM
-  board.loop(); // Hybrid sleep management for power optimization
+  // Power management - only every 10ms to balance power savings with responsiveness
+  if (current_millis - last_board_loop >= 10) {
+    board.loop(); // Hybrid sleep management for power optimization
+    last_board_loop = current_millis;
+  }
 #endif
 }

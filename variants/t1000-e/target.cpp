@@ -155,6 +155,15 @@ bool T1000SensorManager::begin() {
   pinMode(GPS_RESETB, OUTPUT);
   digitalWrite(GPS_RESETB, LOW);
 
+  // Initialize sensor cache with first reading (optimized single power cycle)
+  Serial.println("ENV: Initial sensor reading");
+  T1000eSensorReading initial_reading = t1000e_get_sensors_combined();
+  cached_temperature = initial_reading.temperature;
+  cached_light = initial_reading.light;
+  last_sensor_read = millis();
+  Serial.printf("ENV: Initial values - Temperature: %.1f°C, Light: %u%%\n", 
+               cached_temperature, cached_light);
+
   return true;
 }
 
@@ -163,8 +172,9 @@ bool T1000SensorManager::querySensors(uint8_t requester_permissions, CayenneLPP&
     telemetry.addGPS(TELEM_CHANNEL_SELF, node_lat, node_lon, node_altitude);
   }
   if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
-    telemetry.addLuminosity(TELEM_CHANNEL_SELF, t1000e_get_light());
-    telemetry.addTemperature(TELEM_CHANNEL_SELF, t1000e_get_temperature());
+    // Use cached sensor values instead of reading every time
+    telemetry.addLuminosity(TELEM_CHANNEL_SELF, cached_light);
+    telemetry.addTemperature(TELEM_CHANNEL_SELF, cached_temperature);
   }
   return true;
 }
@@ -184,6 +194,9 @@ void T1000SensorManager::loop() {
     }
     next_gps_update = millis() + 1000;
   }
+
+  // Update environmental sensors based on battery-aware schedule
+  updateEnvironmentalSensors();
 
   // GPS power cycling for battery optimization - only when GPS is active
   if (gps_active) {
@@ -218,20 +231,150 @@ bool T1000SensorManager::setSettingValue(const char* name, const char* value) {
   return false;  // not supported
 }
 
-void T1000SensorManager::cycleGpsPower() {
-  // GPS power cycling: 4.5 minutes on, 30 seconds off for battery optimization
-  static bool gps_currently_on = true;
-  static uint32_t gps_state_change = 0;
-  uint32_t now = millis();
+uint32_t T1000SensorManager::getGPSSleepDuration() {
+  // Base sleep duration: 5 minutes
+  uint32_t base_sleep = 300000;
   
-  if (gps_currently_on && (now - gps_state_change > 270000)) { // 4.5 minutes
-    sleep_gps();
-    gps_currently_on = false;
-    gps_state_change = now;
-  } 
-  else if (!gps_currently_on && (now - gps_state_change > 30000)) { // 30 seconds
-    start_gps();
-    gps_currently_on = true;
-    gps_state_change = now;
+  // Get battery level (if available)
+  float battery_voltage = board.getBattMilliVolts() / 1000.0f;
+  
+  // Scale sleep duration based on battery level
+  if (battery_voltage < 3.3f) {        // Very low battery
+    return base_sleep * 4;              // 20 minutes
+  } else if (battery_voltage < 3.6f) {  // Low battery  
+    return base_sleep * 2;              // 10 minutes
+  } else if (battery_voltage < 3.8f) {  // Medium battery
+    return base_sleep * 1.5f;           // 7.5 minutes
+  } else {                              // Good battery
+    return base_sleep;                  // 5 minutes
+  }
+}
+
+bool T1000SensorManager::shouldSkipGPSCycle() {
+  // Skip GPS entirely when battery is critically low
+  float battery_voltage = board.getBattMilliVolts() / 1000.0f;
+  
+  if (battery_voltage < 3.2f) {
+    // Critical battery - skip GPS for 12 minute cycles maximum
+    static uint32_t last_critical_skip = 0;
+    uint32_t now = millis();
+    
+    if (now - last_critical_skip > 720000) {  // 12 minutes
+      last_critical_skip = now;
+      return false;  // Allow one GPS cycle every 12 minutes
+    }
+    return true;  // Skip this cycle
+  }
+  
+  return false;  // Normal operation
+}
+
+uint32_t T1000SensorManager::getSensorReadInterval() {
+  // Base sensor reading interval: 1 minute (60 seconds)
+  uint32_t base_interval = 60000;
+  
+  // Get battery level (if available)
+  float battery_voltage = board.getBattMilliVolts() / 1000.0f;
+  
+  // Scale sensor reading interval based on battery level
+  if (battery_voltage < 3.3f) {        // Very low battery
+    return base_interval * 10;          // 10 minutes
+  } else if (battery_voltage < 3.6f) {  // Low battery  
+    return base_interval * 5;           // 5 minutes
+  } else if (battery_voltage < 3.8f) {  // Medium battery
+    return base_interval * 2;           // 2 minutes
+  } else {                              // Good battery
+    return base_interval;               // 1 minute
+  }
+}
+
+void T1000SensorManager::updateEnvironmentalSensors() {
+  uint32_t now = millis();
+  uint32_t read_interval = getSensorReadInterval();
+  
+  // Check if it's time to read sensors
+  if (now - last_sensor_read >= read_interval) {
+    Serial.printf("ENV: Reading sensors (battery: %.2fV, interval: %us)\n", 
+                 board.getBattMilliVolts() / 1000.0f, read_interval/1000);
+    
+    // Read both sensors in optimized single power cycle
+    T1000eSensorReading reading = t1000e_get_sensors_combined();
+    cached_temperature = reading.temperature;
+    cached_light = reading.light;
+    
+    last_sensor_read = now;
+    
+    Serial.printf("ENV: Temperature: %.1f°C, Light: %u%%\n", 
+                 cached_temperature, cached_light);
+  }
+}
+
+void T1000SensorManager::cycleGpsPower() {
+  // Check if we should skip GPS due to low battery
+  if (shouldSkipGPSCycle()) {
+    return;
+  }
+  
+  // Smart GPS power cycling: Quick acquisition -> battery-aware sleep
+  static enum {
+    GPS_SLEEPING,     // GPS off, waiting for next cycle
+    GPS_ACQUIRING,    // GPS on, waiting for fix
+    GPS_TRACKING      // GPS has fix, ready to sleep
+  } gps_state = GPS_SLEEPING;
+  
+  static uint32_t state_start_time = 0;
+  static uint32_t acquisition_timeout = 120000;  // 2 minutes max acquisition
+  static uint32_t last_successful_fix = 0;
+  
+  uint32_t now = millis();
+  uint32_t state_duration = now - state_start_time;
+  uint32_t sleep_duration = getGPSSleepDuration();  // Battery-aware sleep duration
+  
+  switch(gps_state) {
+    case GPS_SLEEPING:
+      if (state_duration >= sleep_duration) {
+        // Time to wake up and get a new fix
+        Serial.printf("GPS: Starting acquisition cycle (battery: %.2fV)\n", 
+                     board.getBattMilliVolts() / 1000.0f);
+        start_gps();
+        gps_state = GPS_ACQUIRING;
+        state_start_time = now;
+        
+        // Adaptive acquisition timeout based on time since last fix
+        uint32_t time_since_fix = now - last_successful_fix;
+        if (time_since_fix > 7200000) {  // >2 hours = cold start
+          acquisition_timeout = 180000;  // 3 minutes for cold start
+        } else if (time_since_fix > 1800000) {  // >30 minutes = warm start
+          acquisition_timeout = 90000;   // 1.5 minutes for warm start  
+        } else {
+          acquisition_timeout = 60000;   // 1 minute for hot start
+        }
+      }
+      break;
+      
+    case GPS_ACQUIRING:
+      if (_nmea->isValid()) {
+        // Got a fix! Switch to tracking mode briefly to ensure stability
+        Serial.println("GPS: Fix acquired, entering tracking mode");
+        gps_state = GPS_TRACKING;
+        state_start_time = now;
+        last_successful_fix = now;
+      } else if (state_duration >= acquisition_timeout) {
+        // Timeout - give up and sleep
+        Serial.printf("GPS: Acquisition timeout after %ums, sleeping\n", state_duration);
+        sleep_gps();
+        gps_state = GPS_SLEEPING;
+        state_start_time = now;
+      }
+      break;
+      
+    case GPS_TRACKING:
+      if (state_duration >= 10000) {  // Track for 10 seconds to ensure fix stability
+        Serial.printf("GPS: Cycle complete, sleeping for %u minutes\n", sleep_duration/60000);
+        sleep_gps();
+        gps_state = GPS_SLEEPING;
+        state_start_time = now;
+      }
+      break;
   }
 }

@@ -1,388 +1,893 @@
+// NRFSleep.cpp
 #include "NRFSleep.h"
 
-// NRFSleep implementation is only available on NRF52 platforms
 #ifdef NRF52_PLATFORM
 
 #include <Mesh.h>
+#include <Dispatcher.h>
 #include <nrf_rtc.h>
+#include <helpers/SimpleHardwareTimer.h>
+#include <cmath>  // For fabsf() float comparisons
 
-// Static member definitions
-volatile uint32_t NRFSleep::last_lora_activity = 0;
-uint32_t NRFSleep::last_sleep_check = 0;
-mesh::Radio* NRFSleep::radio_instance = nullptr;
-uint8_t NRFSleep::sleep_cycle_count = 0;
+#ifdef MAX_CONTACTS
+  #include <bluefruit.h>
+#endif
 
-// LoRa DIO1 interrupt handler - captures TX/RX/Timeout events
-void NRFSleep::lora_dio1_interrupt() {
-  // Update activity timestamp (volatile access for interrupt safety)
-  uint32_t current_time = millis();
-  last_lora_activity = current_time;
-  
-  // Optional: Could add debug logging here if needed
-  // Note: Keep interrupt handler minimal for best performance
+// Define button pressed state if not already defined by platformio.ini
+#ifndef USER_BTN_PRESSED
+#define USER_BTN_PRESSED LOW  // Default for most boards
+#endif
+
+// -----------------------------------------------------------------------------
+// Types & Constants
+// -----------------------------------------------------------------------------
+enum WakeReason {
+  NONE,
+  RADIO,
+  BUSY,
+  BUTTON,
+  TIMER,
+  BLE
+};
+
+// Exponential back‑off parameters
+static constexpr uint32_t BASE_SLEEP_MS = 10000;   // 10 s
+static constexpr uint32_t MAX_SLEEP_MS  = 90000;   // 1.5 min
+
+// -----------------------------------------------------------------------------
+// Static state
+// -----------------------------------------------------------------------------
+static volatile WakeReason  wakeReason        = NONE;
+static uint32_t             lastSleepCheckMs  = 0;
+static mesh::Radio*         radioInstance     = nullptr;
+static mesh::Dispatcher*    dispatcherInstance = nullptr;
+static uint32_t             backoffSleepMs    = BASE_SLEEP_MS;
+static uint32_t             lastRadioWakeMs   = 0;
+static uint32_t             lastBLEActivityMs = 0;  // Track BLE connection attempts
+
+// Duty cycle parameters for radio power management
+static bool                 dutyCycleEnabled  = false;
+static uint32_t             rxWindowMs        = 150;    // RX window duration - increased for better reception
+static uint32_t             dutyCycleIntervalMs = 1000; // Total cycle time - reduced for more frequent checks
+static uint32_t             lastRxWindowMs    = 0;      // When we last started RX window
+static bool                 radioInRxMode     = false;  // Track radio state
+
+// Adaptive duty cycle parameters with circular buffer for memory safety
+static bool                 adaptiveDutyCycle = false;
+static float                minDutyCyclePercent = 70.0f; // Minimum duty cycle for reliable packet reception
+static float                maxDutyCyclePercent = 95.0f; // Maximum duty cycle for high-activity periods  
+static float                currentDutyCyclePercent = 75.0f; // Current adaptive duty cycle - start higher
+static uint32_t             lastAdaptiveUpdateMs = 0;   // When we last updated adaptive settings
+static uint32_t             lastPacketActivityMs = 0;  // When we last saw any packet activity
+
+// Circular buffer for learning history (fixed memory, never overflows)
+#define LEARNING_BUFFER_SIZE 24  // 24 hours of history (1 sample per hour)
+struct LearningWindow {
+  uint16_t totalWindows;    // Total RX windows in this hour
+  uint16_t activeWindows;   // RX windows with activity in this hour
+  uint8_t  dutyCyclePercent; // Duty cycle used during this hour
+  uint8_t  reserved;        // Padding for alignment
+};
+
+static LearningWindow       learningBuffer[LEARNING_BUFFER_SIZE];
+static uint8_t              bufferHead = 0;            // Current position in circular buffer
+static uint8_t              bufferCount = 0;           // Number of valid entries (0-24)
+static uint32_t             currentHourWindows = 0;    // Windows in current hour
+static uint32_t             currentHourActive = 0;     // Active windows in current hour
+static uint32_t             lastHourUpdateMs = 0;      // When we last rotated the hour
+static bool                 currentWindowHasActivity = false; // Track activity in current RX window
+
+// -----------------------------------------------------------------------------
+// Interrupt Service Routines
+// -----------------------------------------------------------------------------
+static void ISR_onDIO1()   { wakeReason = RADIO; }
+static void ISR_onBusy()   { wakeReason = BUSY;  }
+static void ISR_onButton() { wakeReason = BUTTON; }
+
+// -----------------------------------------------------------------------------
+// Forward declarations for circular buffer functions
+// -----------------------------------------------------------------------------
+static void initLearningBuffer();
+static void addWindowToCurrentHour(bool hasActivity);
+static void rotateToNextHour();
+static void updateAdaptiveDutyCycle();
+static void manageRadioDutyCycle();
+static float calculateAverageActivityRate();
+static float calculateRecentActivityRate();
+static void printLearningBufferStatus();
+
+// Enhanced BLE monitoring functions
+static void enableEnhancedBLEMonitoring();
+
+// Static flag to prevent duplicate initialization
+static bool nrfSleepInitialized = false;
+
+// -----------------------------------------------------------------------------
+// Enhanced BLE Activity Detection
+// -----------------------------------------------------------------------------
+#ifdef MAX_CONTACTS
+
+// Flag to track if enhanced BLE monitoring is enabled
+static bool enhanced_ble_monitoring = false;
+
+static void enableEnhancedBLEMonitoring() {
+#ifdef MAX_CONTACTS
+  if (!enhanced_ble_monitoring) {
+    enhanced_ble_monitoring = true;
+    Serial.println("DEBUG: Enhanced BLE monitoring enabled for early connection detection");
+  }
+#endif
 }
 
-// Configure RTC2 timer for wake-up from system off mode
-void NRFSleep::setupRTCWake(uint32_t seconds) {
-  // Use RTC2 (RTC0 is used by SoftDevice, RTC1 by Arduino)
-  NRF_RTC2->TASKS_STOP = 1;
-  NRF_RTC2->TASKS_CLEAR = 1;
-  
-  // Configure RTC2 for wake-up
-  NRF_RTC2->PRESCALER = 4095; // 32768 Hz / (4095 + 1) = 8 Hz (125ms per tick)
-  
-  // Calculate compare value for desired seconds
-  // 8 Hz = 8 ticks per second
-  uint32_t compare_value = seconds * 8;
-  NRF_RTC2->CC[0] = compare_value;
-  
-  // Enable RTC2 compare event and interrupt
-  NRF_RTC2->INTENSET = RTC_INTENSET_COMPARE0_Msk;
-  NRF_RTC2->EVTENSET = RTC_EVTENSET_COMPARE0_Msk;
-  
-  // Start RTC2
-  NRF_RTC2->TASKS_START = 1;
-  
-  Serial.printf("DEBUG: RTC2 wake timer set for %d seconds (%d ticks)\n", seconds, compare_value);
-}
+#endif // MAX_CONTACTS
 
-void NRFSleep::init() {
-  // Setup LoRa DIO1 interrupt for activity tracking
+// -----------------------------------------------------------------------------
+// Common initialization helper
+// -----------------------------------------------------------------------------
+static void initializeInterruptsAndTimer() {
+  if (nrfSleepInitialized) {
+    Serial.println("DEBUG: NRFSleep already initialized, skipping redundant setup");
+    return;
+  }
+
   pinMode(LORA_DIO_1, INPUT);
+  attachInterrupt(digitalPinToInterrupt(LORA_DIO_1), ISR_onDIO1, CHANGE);
+
+  pinMode(LORA_BUSY, INPUT);
+  attachInterrupt(digitalPinToInterrupt(LORA_BUSY), ISR_onBusy, RISING);
+
+  #ifdef BUTTON_PIN
+  pinMode(BUTTON_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), ISR_onButton, RISING);
+  #endif
+
+  SimpleHardwareTimer::init();
+  wakeReason       = NONE;
+  lastSleepCheckMs = millis();
+  lastRadioWakeMs  = 0;
+  backoffSleepMs   = BASE_SLEEP_MS;
+
+  nrfSleepInitialized = true;
+
+  Serial.println("DEBUG: NRFSleep core initialization completed");
+  Serial.printf("DEBUG: Using LORA_DIO_1 pin %d, LORA_BUSY pin %d\n", LORA_DIO_1, LORA_BUSY);
+  #ifdef BUTTON_PIN
+  Serial.printf("DEBUG: Button pin %d configured for RISING edge (active HIGH)\n", BUTTON_PIN);
+  #endif
+
+#ifdef MAX_CONTACTS
+  enableEnhancedBLEMonitoring();
+#endif
+}
+
+// -----------------------------------------------------------------------------
+// Initialization
+// -----------------------------------------------------------------------------
+void NRFSleep::init() {
+  radioInstance = nullptr;
+  dispatcherInstance = nullptr;
+
+  initializeInterruptsAndTimer();
   
-  // Initialize LoRa activity timestamp to allow immediate sleep on first boot
-  last_lora_activity = 0;
-  
-  // Attach interrupt for LoRa events (TxDone, RxDone, RxTimeout, etc.)
-  attachInterrupt(digitalPinToInterrupt(LORA_DIO_1), lora_dio1_interrupt, CHANGE);
-  Serial.printf("DEBUG: LoRa DIO1 (pin %d) interrupt configured for CLIENT mode sleep\n", LORA_DIO_1);
-  Serial.println("DEBUG: CLIENT mode - peripherals powered down only during deep sleep");
+  Serial.println("DEBUG: NRFSleep initialized (no radio)");
 }
 
 void NRFSleep::init(mesh::Radio* radio) {
-  radio_instance = radio;
-  init(); // Call the base init
-  Serial.println("DEBUG: NRFSleep initialized with radio instance for airtime calculations");
+  radioInstance = radio;
+  if (!dispatcherInstance) {
+    dispatcherInstance = nullptr;
+  }
+
+  initializeInterruptsAndTimer();
+
+  static bool advancedFeaturesInitialized = false;
+  if (!advancedFeaturesInitialized && radioInstance) {
+    initLearningBuffer();
+    
+    enableAdaptiveDutyCycle(70.0f, 95.0f);
+    
+    advancedFeaturesInitialized = true;
+    Serial.println("DEBUG: NRFSleep initialized with radio + adaptive duty cycling (production default)");
+  } else if (radioInstance) {
+    Serial.println("DEBUG: NRFSleep radio instance updated");
+  } else {
+    Serial.println("DEBUG: NRFSleep initialized with radio instance");
+  }
 }
 
-bool NRFSleep::shouldDelayForLora() {
+void NRFSleep::init(mesh::Radio* radio, mesh::Dispatcher* dispatcher) {
+  radioInstance = radio;
+  dispatcherInstance = dispatcher;
+
+  initializeInterruptsAndTimer();
+
+  static bool advancedFeaturesInitialized = false;
+  if (!advancedFeaturesInitialized && radioInstance) {
+    initLearningBuffer();
+    enableAdaptiveDutyCycle(70.0f, 95.0f);
+    
+    advancedFeaturesInitialized = true;
+    Serial.println("DEBUG: NRFSleep initialized with radio + dispatcher + adaptive duty cycling (production default)");
+  } else {
+    Serial.println("DEBUG: NRFSleep radio and dispatcher instances updated");
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Set dispatcher reference after mesh initialization
+// -----------------------------------------------------------------------------
+void NRFSleep::setDispatcher(mesh::Dispatcher* dispatcher) {
+  dispatcherInstance = dispatcher;
+  Serial.println("DEBUG: NRFSleep dispatcher reference updated");
+}
+
+// -----------------------------------------------------------------------------
+// BLE activity notification
+// -----------------------------------------------------------------------------
+void NRFSleep::notifyBLEActivity() {
+  lastBLEActivityMs = millis();
+  Serial.println("DEBUG: BLE activity detected - preventing sleep for 10s");
+}
+
+void NRFSleep::notifyBLEConnectionAttempt() {
+  lastBLEActivityMs = millis();
+  Serial.println("DEBUG: BLE connection attempt detected - preventing sleep for 10s");
+  
+  notifyBLEActivity();
+}
+
+// -----------------------------------------------------------------------------
+// Radio duty cycle configuration for power savings
+// -----------------------------------------------------------------------------
+void NRFSleep::setDutyCycle(uint32_t rx_window_ms, uint32_t interval_ms) {
+  if (interval_ms < rx_window_ms) {
+    Serial.println("ERROR: Duty cycle interval must be >= RX window");
+    return;
+  }
+  
+  rxWindowMs = rx_window_ms;
+  dutyCycleIntervalMs = interval_ms;
+  lastRxWindowMs = 0;  // Reset timing
+  
+  float dutyCyclePercent = (float)rx_window_ms / interval_ms * 100.0f;
+  
+  // Only enable duty cycling if hardware supports it
+  if (radioInstance && radioInstance->supportsHardwareDutyCycle()) {
+    // Convert to microseconds for hardware timer
+    uint32_t rxPeriodUs = rx_window_ms * 1000;
+    uint32_t sleepPeriodUs = (interval_ms - rx_window_ms) * 1000;
+    
+    if (radioInstance->startReceiveDutyCycle(rxPeriodUs, sleepPeriodUs)) {
+      dutyCycleEnabled = true;  // Only enable if hardware duty cycle succeeds
+      Serial.printf("DEBUG: Hardware duty cycle enabled: %ums RX every %ums (%.1f%% duty cycle)\n", 
+                    rx_window_ms, interval_ms, dutyCyclePercent);
+      
+      // Estimated power savings
+      float powerSavings = (1.0f - (float)rx_window_ms / interval_ms) * 100.0f;
+      Serial.printf("DEBUG: Hardware-controlled power savings: %.0f%% (from ~5mA to ~%.1fmA)\n", 
+                    powerSavings, 5.0f * rx_window_ms / interval_ms + 0.1f);
+      return;
+    }
+  }
+  
+  // Hardware duty cycling not available - do not enable software fallback
+  dutyCycleEnabled = false;  // Explicitly disable duty cycling
+  Serial.printf("WARNING: Hardware duty cycle not supported - duty cycling disabled (requested: %ums RX every %ums, %.1f%% duty cycle)\n", 
+                rx_window_ms, interval_ms, dutyCyclePercent);
+  Serial.println("INFO: Radio will remain in continuous RX mode for maximum responsiveness");
+  
+  // Ensure radio is in continuous RX mode
+  if (radioInstance && !radioInstance->isInRecvMode()) {
+    radioInstance->startRecv();
+    radioInRxMode = true;
+  }
+}
+
+void NRFSleep::disableDutyCycle() {
+  dutyCycleEnabled = false;
+  adaptiveDutyCycle = false;
+  Serial.println("DEBUG: Radio duty cycle disabled - continuous RX mode");
+  
+  // Ensure radio is in RX mode
+  if (radioInstance && !radioInstance->isInRecvMode()) {
+    radioInstance->startRecv();
+    radioInRxMode = true;
+  }
+}
+
+void NRFSleep::enableAdaptiveDutyCycle(float min_duty_percent, float max_duty_percent) {
+  if (min_duty_percent < 1.0f || max_duty_percent > 95.0f || min_duty_percent >= max_duty_percent) {
+    Serial.println("ERROR: Invalid adaptive duty cycle range");
+    return;
+  }
+  
+  // Check if hardware supports duty cycling before enabling
+  if (!radioInstance || !radioInstance->supportsHardwareDutyCycle()) {
+    Serial.println("WARNING: Adaptive duty cycle requires hardware duty cycling support - feature disabled");
+    Serial.println("INFO: Radio will remain in continuous RX mode for maximum responsiveness");
+    dutyCycleEnabled = false;
+    adaptiveDutyCycle = false;
+    
+    // Ensure radio is in continuous RX mode
+    if (radioInstance && !radioInstance->isInRecvMode()) {
+      radioInstance->startRecv();
+      radioInRxMode = true;
+    }
+    return;
+  }
+  
+  minDutyCyclePercent = min_duty_percent;
+  maxDutyCyclePercent = max_duty_percent;
+  currentDutyCyclePercent = (min_duty_percent + max_duty_percent) / 2.0f; // Start in middle
+  
+  // Calculate initial interval based on fixed RX window and adaptive duty cycle
+  dutyCycleIntervalMs = uint32_t(float(rxWindowMs) * 100.0f / currentDutyCyclePercent + 0.5f);
+  
+  dutyCycleEnabled = true;
+  adaptiveDutyCycle = true;
+  
+  initLearningBuffer();  // Initialize learning system
+  
+  Serial.printf("DEBUG: Adaptive duty cycle enabled: %.1f%% to %.1f%%, starting at %.1f%%\n", 
+                min_duty_percent, max_duty_percent, currentDutyCyclePercent);
+  Serial.printf("DEBUG: Initial settings: %ums RX every %ums\n", rxWindowMs, dutyCycleIntervalMs);
+  
+  // Apply initial settings to hardware
+  uint32_t rxPeriodUs = rxWindowMs * 1000;
+  uint32_t sleepPeriodUs = (dutyCycleIntervalMs - rxWindowMs) * 1000;
+  if (radioInstance->startReceiveDutyCycle(rxPeriodUs, sleepPeriodUs)) {
+    Serial.println("DEBUG: Applied adaptive settings to hardware duty cycling");
+  } else {
+    Serial.println("ERROR: Failed to apply adaptive settings to hardware - disabling adaptive duty cycle");
+    dutyCycleEnabled = false;
+    adaptiveDutyCycle = false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Adaptive duty cycle management
+// -----------------------------------------------------------------------------
+void NRFSleep::updateAdaptiveDutyCycle() {
+  if (!adaptiveDutyCycle) return;
+
   uint32_t now = millis();
   
-  // Calculate dynamic LoRa delay based on radio parameters
-  uint32_t lora_delay_ms = getLoRaSleepDelayMs();
-  
-  // Check if LoRa activity occurred within the calculated delay period
-  // Handle millis() overflow safely (though rare - occurs every ~49 days)
-  uint32_t time_since_lora = (last_lora_activity == 0) ? lora_delay_ms + 1 : (now - last_lora_activity);
-  bool lora_activity_recent = time_since_lora < lora_delay_ms;
-  
-  // Smart LoRa BUSY check: Only check if we haven't had very recent activity
-  // This prevents interference with normal radio driver operations
-  bool lora_busy = false;
-  if (time_since_lora > 500) {  // Only check BUSY if no activity for 500ms
-    lora_busy = digitalRead(LORA_BUSY) == HIGH;
+  // Only update every 5 minutes minimum between updates
+  if (now - lastAdaptiveUpdateMs < 300000) {  // 5 minutes minimum between updates
+    return;
   }
+  lastAdaptiveUpdateMs = now;
+
+  // Calculate activity rates
+  float avgActivity = calculateAverageActivityRate();
+  float recentActivity = calculateRecentActivityRate();
   
-  if (lora_activity_recent || lora_busy) {
-    const char* reason = lora_busy ? "LoRa BUSY active" : "recent LoRa activity";
-    Serial.printf("DEBUG: Delaying sleep - %s (%d ms ago, <%d ms threshold)\n", 
-                  reason, time_since_lora, lora_delay_ms);
-    
-    // Update activity timestamp if radio is currently busy (less aggressive)
-    if (lora_busy) {
-      last_lora_activity = now;
+  // Handle early startup period gracefully - use recent activity as baseline if no history
+  if (avgActivity < 0 && recentActivity >= 0) {
+    // New deployment - use recent activity as initial baseline
+    avgActivity = recentActivity;
+    Serial.printf("DEBUG: Early startup - using recent activity %.2f%% as baseline\n", recentActivity * 100);
+  } else if (avgActivity < 0 && recentActivity < 0) {
+    // No data at all yet - use conservative defaults
+    Serial.println("DEBUG: No activity data yet - maintaining current duty cycle");
+    return;
+  } else if (recentActivity < 0) {
+    // No recent activity but have historical data - assume quiet period
+    recentActivity = 0.0f;
+    Serial.println("DEBUG: No recent activity - assuming quiet period");
+  }
+
+  Serial.printf("DEBUG: Adaptive duty cycle analysis: avg=%.2f%%, recent=%.2f%%, current=%.1f%%\n", 
+                avgActivity * 100, recentActivity * 100, currentDutyCyclePercent);
+
+  float oldDutyCycle = currentDutyCyclePercent;
+
+  // Adjust duty cycle based on recent vs historical activity with conservative scaling
+  if (recentActivity > avgActivity * 2.0f) {
+    // High activity spike - increase duty cycle moderately (was 2.0x, now 1.5x)
+    currentDutyCyclePercent = min(currentDutyCyclePercent * 1.5f, maxDutyCyclePercent);
+  } else if (recentActivity > avgActivity * 1.5f) {
+    // Moderate activity increase (was 1.5x, now 1.3x)
+    currentDutyCyclePercent = min(currentDutyCyclePercent * 1.3f, maxDutyCyclePercent);
+  } else if (recentActivity > avgActivity * 1.2f) {
+    // Slight activity increase (was 1.2x, now 1.15x)
+    currentDutyCyclePercent = min(currentDutyCyclePercent * 1.15f, maxDutyCyclePercent);
+  } else if (recentActivity > avgActivity * 1.1f) {
+    // Very slight increase (was 1.1x, now 1.05x)
+    currentDutyCyclePercent = min(currentDutyCyclePercent * 1.05f, maxDutyCyclePercent);
+  } else if (recentActivity < avgActivity * 0.5f) {
+    // Activity has decreased significantly - reduce duty cycle conservatively
+    float decreaseFactor = 0.9f;  // Conservative decrease (was 0.8f)
+    if (recentActivity < avgActivity * 0.1f) {
+      decreaseFactor = 0.8f;  // Still conservative (was 0.5f)
     }
     
-    return true; // Should delay sleep
+    float minSafetyDutyCycle = max(70.0f, minDutyCyclePercent);
+    currentDutyCyclePercent = max(currentDutyCyclePercent * decreaseFactor, minSafetyDutyCycle);
+  }
+
+  // Apply safety limits with improved bounds checking
+  static constexpr float HARD_MINIMUM_DUTY_CYCLE = 10.0f; // Absolute minimum for reliability
+  
+  float effectiveMinimum = max(70.0f, max(minDutyCyclePercent, HARD_MINIMUM_DUTY_CYCLE));
+  
+  // Clamp to safe minimum
+  if (currentDutyCyclePercent < effectiveMinimum) {
+    currentDutyCyclePercent = effectiveMinimum;
+    Serial.printf("DEBUG: Duty cycle clamped to %.1f%% minimum (safety: %.1f%%, user: %.1f%%)\n", 
+                  effectiveMinimum, HARD_MINIMUM_DUTY_CYCLE, minDutyCyclePercent);
   }
   
-  // Debug: Show when sleep is allowed
-  Serial.printf("DEBUG: Sleep allowed - no LoRa activity for %d ms (>%d ms threshold)\n", 
-                time_since_lora, lora_delay_ms);
-  return false; // OK to sleep
+  // Clamp to maximum
+  if (currentDutyCyclePercent > maxDutyCyclePercent) {
+    currentDutyCyclePercent = maxDutyCyclePercent;
+    Serial.printf("DEBUG: Duty cycle clamped to %.1f%% maximum\n", maxDutyCyclePercent);
+  }
+
+  // Apply changes if significant (reduced threshold for more responsive adaptation)
+  if (fabsf(currentDutyCyclePercent - oldDutyCycle) > 0.3f) {  // Was 0.5f, now 0.3f
+    dutyCycleIntervalMs = uint32_t(float(rxWindowMs) * 100.0f / currentDutyCyclePercent + 0.5f);
+    
+    // Sanity check the calculated interval
+    if (dutyCycleIntervalMs < rxWindowMs || dutyCycleIntervalMs > 60000) {
+      Serial.printf("ERROR: Invalid duty cycle interval %ums calculated, reverting to safe defaults\n", dutyCycleIntervalMs);
+      currentDutyCyclePercent = 20.0f;  // Safe default
+      dutyCycleIntervalMs = uint32_t(float(rxWindowMs) * 100.0f / 20.0f + 0.5f);
+    }
+    
+    Serial.printf("DEBUG: Adaptive duty cycle updated: activity=%.1f%% -> %.1f%% duty, %ums interval\n", 
+                  recentActivity * 100, currentDutyCyclePercent, dutyCycleIntervalMs);
+                  
+    // Apply to hardware duty cycling if available
+    if (radioInstance && radioInstance->supportsHardwareDutyCycle() && dutyCycleEnabled) {
+      uint32_t rxPeriodUs = rxWindowMs * 1000;
+      uint32_t sleepPeriodUs = (dutyCycleIntervalMs - rxWindowMs) * 1000;
+      
+      if (radioInstance->startReceiveDutyCycle(rxPeriodUs, sleepPeriodUs)) {
+        Serial.println("DEBUG: Hardware duty cycle updated with new adaptive settings");
+      } else {
+        Serial.println("ERROR: Failed to update hardware duty cycle - disabling adaptive mode");
+        adaptiveDutyCycle = false;
+        dutyCycleEnabled = false;
+      }
+    }
+  }
 }
 
-// Enter light sleep for short delays (keeps system running)
-void NRFSleep::enterLightSleep(uint32_t timeout_ms) {
-  // Light sleep for short delays - system stays running
-  // Used when we need to wake up quickly or maintain state
-  
-  // Skip sleep if buzzer is active
-#ifdef PIN_BUZZER
-  if (rtttl::isPlaying()) {
-    return;
+// -----------------------------------------------------------------------------
+// Circular buffer management for memory-safe learning
+// -----------------------------------------------------------------------------
+static void initLearningBuffer() {
+  memset(learningBuffer, 0, sizeof(learningBuffer));
+  bufferHead = 0;
+  bufferCount = 0;
+  currentHourWindows = 0;
+  currentHourActive = 0;
+  lastHourUpdateMs = millis();
+  lastPacketActivityMs = millis();
+  Serial.println("DEBUG: Learning buffer initialized (24-hour circular buffer)");
+}
+
+static void addWindowToCurrentHour(bool hasActivity) {
+  currentHourWindows++;
+  if (hasActivity) {
+    currentHourActive++;
   }
-#endif
-
-  if (timeout_ms == 0) {
-    sd_app_evt_wait();
-    return;
-  }
-
-  // Simple timeout-based light sleep
-  uint32_t sleep_start = millis();
   
-  while ((millis() - sleep_start) < timeout_ms) {
-    // Check for immediate wake conditions
-#ifdef BUTTON_PIN
-    if (digitalRead(BUTTON_PIN) == HIGH) {
-      return;
-    }
-#endif
+  // Prevent overflow (extremely unlikely but safety first)
+  if (currentHourWindows > 65000) {
+    currentHourWindows = 65000;
+  }
+  if (currentHourActive > 65000) {
+    currentHourActive = 65000;  
+  }
+}
 
-    // Check LoRa activity
-    if (digitalRead(LORA_DIO_1) == HIGH || digitalRead(LORA_BUSY) == HIGH) {
-      return;
+static void markCurrentWindowActive() {
+  if (!adaptiveDutyCycle) return;
+  
+  if (!currentWindowHasActivity) {
+    currentWindowHasActivity = true;
+    currentHourActive++;
+    lastPacketActivityMs = millis();
+    
+    // Log activity detection for debugging
+    Serial.println("DEBUG: Activity detected in current RX window");
+  }
+}
+
+static void rotateToNextHour() {
+  // Store current hour data in circular buffer
+  learningBuffer[bufferHead].totalWindows = min(currentHourWindows, 65535);
+  learningBuffer[bufferHead].activeWindows = min(currentHourActive, 65535);
+  learningBuffer[bufferHead].dutyCyclePercent = (uint8_t)min(currentDutyCyclePercent, 255.0f);
+  learningBuffer[bufferHead].reserved = 0;
+  
+  Serial.printf("DEBUG: Hour complete - %d/%d active windows (%.1f%% activity) at %.1f%% duty cycle [Buffer pos %d]\n",
+                currentHourActive, currentHourWindows, 
+                currentHourWindows > 0 ? (float)currentHourActive / currentHourWindows * 100.0f : 0.0f,
+                currentDutyCyclePercent, bufferHead);
+  
+  // Print buffer status after rotation
+  printLearningBufferStatus();
+  
+  // Move to next buffer position (circular)
+  bufferHead = (bufferHead + 1) % LEARNING_BUFFER_SIZE;
+  if (bufferCount < LEARNING_BUFFER_SIZE) {
+    bufferCount++;
+  }
+  
+  // Reset current hour counters
+  currentHourWindows = 0;
+  currentHourActive = 0;
+  lastHourUpdateMs = millis();
+}
+
+// Helper functions for adaptive duty cycling
+static float calculateAverageActivityRate() {
+  if (bufferCount == 0) return -1.0f;  // No data
+  
+  uint32_t totalWindowsSum = 0;
+  uint32_t activeWindowsSum = 0;
+  
+  for (int i = 0; i < bufferCount; i++) {
+    totalWindowsSum += learningBuffer[i].totalWindows;
+    activeWindowsSum += learningBuffer[i].activeWindows;
+  }
+  
+  if (totalWindowsSum == 0) return 0.0f;
+  return (float)activeWindowsSum / totalWindowsSum;
+}
+
+static float calculateRecentActivityRate() {
+  // Use current hour data for recent activity
+  if (currentHourWindows == 0) return -1.0f;  // No recent data
+  return (float)currentHourActive / currentHourWindows;
+}
+
+static void printLearningBufferStatus() {
+  if (bufferCount == 0) return;
+  
+  Serial.printf("DEBUG: Learning buffer status (%d hours):\n", bufferCount);
+  for (int i = 0; i < min(bufferCount, 5); i++) {  // Show last 5 hours
+    int idx = (bufferHead - 1 - i + LEARNING_BUFFER_SIZE) % LEARNING_BUFFER_SIZE;
+    if (idx < 0) idx += LEARNING_BUFFER_SIZE;
+    
+    float activity = learningBuffer[idx].totalWindows > 0 
+      ? (float)learningBuffer[idx].activeWindows / learningBuffer[idx].totalWindows * 100.0f
+      : 0.0f;
+    Serial.printf("  Hour -%d: %d/%d windows (%.1f%% activity, %.1f%% duty)\n", 
+                  i+1, learningBuffer[idx].activeWindows, learningBuffer[idx].totalWindows,
+                  activity, (float)learningBuffer[idx].dutyCyclePercent);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Radio duty cycle management
+// -----------------------------------------------------------------------------
+void NRFSleep::manageRadioDutyCycle() {
+  if (!dutyCycleEnabled || !radioInstance) return;
+  
+  uint32_t now = millis();
+  
+  // Disable duty cycling when BLE is connected for maximum responsiveness
+  #ifdef MAX_CONTACTS
+  static bool wasBLEConnected = false;
+  static bool preBLEDutyCycleState = false;  // Remember duty cycle state before BLE connection
+  static bool preBLEAdaptiveState = false;   // Remember adaptive state before BLE connection
+  bool bleConnected = Bluefruit.connected();
+  
+  if (bleConnected && !wasBLEConnected) {
+    // BLE just connected - save current state and disable duty cycling completely
+    preBLEDutyCycleState = dutyCycleEnabled;
+    preBLEAdaptiveState = adaptiveDutyCycle;
+    
+    if (radioInstance->supportsHardwareDutyCycle() && dutyCycleEnabled) {
+      radioInstance->idle();  // Stop hardware duty cycling
+      dutyCycleEnabled = false;  // Disable duty cycling flag
+      Serial.println("DEBUG: BLE connected - duty cycling disabled for maximum responsiveness");
     }
     
-#ifdef PIN_BUZZER
-    // Check buzzer activity
-    if (rtttl::isPlaying()) {
+    // Ensure radio is in continuous receive mode
+    radioInstance->startRecv();
+    radioInRxMode = true;
+    wasBLEConnected = true;
+  } else if (!bleConnected && wasBLEConnected) {
+    // BLE just disconnected - restore previous duty cycle state
+    if (radioInstance->supportsHardwareDutyCycle() && preBLEDutyCycleState) {
+      dutyCycleEnabled = preBLEDutyCycleState;
+      adaptiveDutyCycle = preBLEAdaptiveState;
+      
+      // Restart duty cycling with current settings
+      uint32_t rxPeriodUs = rxWindowMs * 1000;
+      uint32_t sleepPeriodUs = (dutyCycleIntervalMs - rxWindowMs) * 1000;
+      if (radioInstance->startReceiveDutyCycle(rxPeriodUs, sleepPeriodUs)) {
+        Serial.printf("DEBUG: BLE disconnected - duty cycling restored (%.1f%% duty cycle)\n", 
+                      currentDutyCyclePercent);
+      }
+    }
+    wasBLEConnected = false;
+  }
+  
+  // If BLE is connected, skip duty cycling management (duty cycle is now disabled)
+  if (bleConnected) {
+    return;
+  }
+  #endif
+  
+  // Check if we need to rotate to the next hour in our learning buffer
+  if (adaptiveDutyCycle && (now - lastHourUpdateMs >= 3600000)) { // 1 hour = 3600000ms
+    rotateToNextHour();
+  }
+  
+  // Update adaptive parameters if enabled
+  updateAdaptiveDutyCycle();
+  
+  // Hardware duty cycling handles timing automatically - just monitor for activity
+  if (radioInstance->supportsHardwareDutyCycle()) {
+    // Hardware is handling duty cycling - we just need to track activity for adaptive algorithm
+    if (adaptiveDutyCycle) {
+      // Check for preamble detection or packet activity for learning
+      if (radioInstance->isPreambleDetected() || radioInstance->isReceiving()) {
+        if (!currentWindowHasActivity) {
+          currentWindowHasActivity = true;
+          currentHourActive++;
+          lastPacketActivityMs = now;
+          Serial.println("DEBUG: Hardware duty cycle detected activity");
+        }
+      }
+    }
+    return;  // Hardware handles the rest
+  }
+  
+  // No software duty cycling fallback - duty cycling is only enabled for hardware-supported radios
+  // If we reach this point, it means duty cycling was somehow enabled without hardware support,
+  // which should not happen with the updated configuration logic
+  Serial.println("WARNING: Duty cycling enabled but hardware support not detected - this should not happen");
+}
+
+// -----------------------------------------------------------------------------
+// Main sleep-management state machine
+// -----------------------------------------------------------------------------
+void NRFSleep::manageSleepLoop() {
+  uint32_t now = millis();
+  if (now - lastSleepCheckMs < 5000) return;  // Check every 5 seconds
+  lastSleepCheckMs = now;
+
+  // 0) Manage radio duty cycle for power savings
+  manageRadioDutyCycle();
+
+  // 1) Don't sleep if we just had LoRa activity or BUSY
+  static uint32_t lastLoraMs = 0;
+  if (wakeReason == RADIO || digitalRead(LORA_BUSY)) {
+    lastLoraMs   = now;
+    lastRadioWakeMs = now;  // Track when we last had radio activity
+    wakeReason   = NONE;
+    backoffSleepMs = BASE_SLEEP_MS;
+    
+    // Temporarily disable duty cycling during active periods
+    if (dutyCycleEnabled) {
+      Serial.println("DEBUG: Disabling duty cycle temporarily due to radio activity");
+      if (radioInstance && !radioInstance->isInRecvMode()) {
+        radioInstance->startRecv();
+        radioInRxMode = true;
+      }
+    }
+    return;
+  }
+  
+  // 2) Don't sleep for 5 seconds after any radio activity to allow packet processing
+  if (now - lastLoraMs < 5000) {
+    // Keep radio active during packet processing period
+    if (dutyCycleEnabled && radioInstance && !radioInstance->isInRecvMode()) {
+      radioInstance->startRecv();
+      radioInRxMode = true;
+      Serial.println("DEBUG: Keeping radio active for packet processing");
+    }
+    return;
+  }
+
+  // 3) Check for pending packets (both inbound and outbound) if we have dispatcher access
+  if (dispatcherInstance) {
+    int outboundCount = dispatcherInstance->getOutboundCount(now);
+    int inboundCount = dispatcherInstance->getInboundCount(now);
+    if (outboundCount > 0 || inboundCount > 0) {
+      Serial.printf("DEBUG: %d outbound, %d inbound packets pending - not sleeping\n", 
+                    outboundCount, inboundCount);
+      
+      // Ensure radio is active for packet processing
+      if (dutyCycleEnabled && radioInstance && !radioInstance->isInRecvMode()) {
+        radioInstance->startRecv();
+        radioInRxMode = true;
+        Serial.println("DEBUG: Activating radio for pending packets");
+      }
       return;
     }
-#endif
+  }
+
+  // 4) Re-enable duty cycling after activity period ends
+  if (dutyCycleEnabled && (now - lastLoraMs >= 5000)) {
+    // Resume normal duty cycling (hardware only)
+    if (radioInstance->supportsHardwareDutyCycle()) {
+      // Hardware duty cycling resumes automatically - just log
+      Serial.println("DEBUG: Resuming hardware duty cycle after activity period");
+    }
+    // Note: Software duty cycling is no longer supported
+  }
+
+  // 5) Pick sleep duration
+  bool bleConnected = false;
+  bool recentBLEActivity = false;
+  bool recentRadioActivity = false;
+  
+  #ifdef MAX_CONTACTS
+    bleConnected = Bluefruit.connected();
+    // Check for recent BLE activity within the last 10 seconds
+    recentBLEActivity = (now - lastBLEActivityMs < 10000);
     
-    if ((millis() - sleep_start) >= timeout_ms) {
+    // Additional check: if we just connected, extend BLE activity period
+    if (bleConnected && !recentBLEActivity) {
+      Serial.println("DEBUG: Active BLE connection detected - extending wake period");
+      lastBLEActivityMs = now;  // Reset timer to keep device awake
+      recentBLEActivity = true;
+    }
+    
+    // Enhanced monitoring: check if advertising is active (indicates potential connections)
+    if (enhanced_ble_monitoring && !bleConnected && Bluefruit.Advertising.isRunning()) {
+      // Device is advertising but not connected - check if we recently woke from radio activity
+      // This could indicate a connection attempt in progress
+      if ((now - lastRadioWakeMs < 2000) && !recentBLEActivity) {
+        Serial.println("DEBUG: Advertising active with recent radio wake - potential BLE connection attempt");
+        lastBLEActivityMs = now;  // Extend wake time
+        recentBLEActivity = true;
+      }
+    }
+  #endif
+  
+  // Check for recent radio activity within the last 30 seconds
+  recentRadioActivity = (now - lastRadioWakeMs < 30000);
+
+  uint32_t sleepMs;
+  if (bleConnected || recentBLEActivity) {
+    // BLE activity - use very short sleep for responsiveness
+    sleepMs = 1000;
+    backoffSleepMs = BASE_SLEEP_MS;
+    wakeReason = BLE;
+  } else if (recentRadioActivity) {
+    // Recent radio activity - use shorter sleep than normal backoff
+    sleepMs = 3000;  // 3 seconds instead of full backoff
+    backoffSleepMs = BASE_SLEEP_MS;  // Reset backoff since we had activity
+  } else {
+    // No recent activity - use exponential backoff
+    sleepMs = backoffSleepMs;
+    backoffSleepMs = min(backoffSleepMs * 2, MAX_SLEEP_MS);
+  }
+
+  Serial.printf("DEBUG: Sleeping %ums (BLE=%d, RecentBLE=%d, RecentRadio=%d, DutyCycle=%d, HW=%d)\n", 
+                sleepMs, bleConnected, recentBLEActivity, recentRadioActivity, dutyCycleEnabled, 
+                radioInstance ? radioInstance->supportsHardwareDutyCycle() : 0);
+
+  // 6) Configure radio for sleep period
+  if (dutyCycleEnabled) {
+    if (radioInstance && radioInstance->supportsHardwareDutyCycle()) {
+      // Hardware duty cycling handles radio state automatically
+      Serial.println("DEBUG: Hardware duty cycling active during sleep");
+    }
+    // Note: Software duty cycling is no longer supported
+  } else {
+    // Continuous mode - ensure radio is in receive mode
+    if (radioInstance && !radioInstance->isInRecvMode()) {
+      Serial.println("DEBUG: Starting radio RX mode before sleep");
+      radioInstance->startRecv();
+    }
+  }
+
+  // 7) Arm timer & clear flag with error checking
+  if (!SimpleHardwareTimer::start(sleepMs)) {
+    Serial.println("ERROR: Failed to start hardware timer - using delay fallback");
+    delay(min(sleepMs, 1000UL));  // Fallback to delay with 1s max
+    return;
+  }
+  wakeReason = NONE;
+
+  // Turn off LEDs to save power during sleep
+  
+  // Primary LED control using board-specific definitions
+  #ifdef LED_PIN
+    #ifdef LED_STATE_ON
+      digitalWrite(LED_PIN, !LED_STATE_ON);  // Turn off using inverted state
+    #else
+      digitalWrite(LED_PIN, LOW);  // Default assumption
+    #endif
+  #endif
+  
+  #ifdef LED_BUILTIN
+    #ifdef LED_STATE_ON
+      digitalWrite(LED_BUILTIN, !LED_STATE_ON);  // Turn off using inverted state
+    #else
+      digitalWrite(LED_BUILTIN, LOW);  // Default assumption
+    #endif
+  #endif
+  
+  #ifdef PIN_LED
+    digitalWrite(PIN_LED, LOW);  // Usually active high
+  #endif
+  
+  // RGB LEDs - only control if not already controlled by LED_PIN
+  #if defined(LED_RED) && (!defined(LED_PIN) || (LED_PIN != LED_RED))
+    #ifdef LED_STATE_ON
+      digitalWrite(LED_RED, !LED_STATE_ON);
+    #else
+      digitalWrite(LED_RED, HIGH);  // Usually active low on RGB LEDs
+    #endif
+  #endif
+  
+  #if defined(LED_GREEN) && (!defined(LED_PIN) || (LED_PIN != LED_GREEN))
+    #ifdef LED_STATE_ON
+      digitalWrite(LED_GREEN, !LED_STATE_ON);
+    #else
+      digitalWrite(LED_GREEN, HIGH);  // Usually active low on RGB LEDs
+    #endif
+  #endif
+  
+  #if defined(LED_BLUE) && (!defined(LED_PIN) || (LED_PIN != LED_BLUE))
+    #ifdef LED_STATE_ON
+      digitalWrite(LED_BLUE, !LED_STATE_ON);
+    #else
+      digitalWrite(LED_BLUE, HIGH);  // Usually active low on RGB LEDs
+    #endif
+  #endif
+  
+  // LoRa TX LED (usually inverted)
+  #ifdef P_LORA_TX_LED
+    digitalWrite(P_LORA_TX_LED, HIGH);  // Usually inverted - HIGH for off
+  #endif
+
+  // 8) Sleep until timer expires *or* any wake source
+  uint32_t sleepStartMs = millis();
+  uint32_t maxSleepMs = sleepMs + 1000;  // Add 1s safety margin
+  
+  while (!SimpleHardwareTimer::isExpired()) {
+    // Safety timeout check to prevent infinite loops
+    uint32_t sleepElapsed = millis() - sleepStartMs;
+    if (sleepElapsed > maxSleepMs) {
+      Serial.printf("WARNING: Sleep timeout after %ums (expected %ums) - breaking loop\n", 
+                    sleepElapsed, sleepMs);
+      wakeReason = TIMER;
       break;
     }
     
-    sd_app_evt_wait(); // Light sleep until next event
-  }
-}
-
-
-
-void NRFSleep::markLoraActivity() {
-  last_lora_activity = millis();
-}
-
-// Hybrid sleep strategy - balances connectivity and power
-void NRFSleep::enterHybridSleep(uint32_t sleep_duration_ms, bool ble_connected) {
-  // If BLE is connected, always use light sleep to maintain connection
-  if (ble_connected) {
-    Serial.printf("DEBUG: BLE connected - using light sleep (%d ms)\n", sleep_duration_ms);
-    enterLightSleep(sleep_duration_ms);
-    return;
-  }
-  
-  // Hybrid strategy when no BLE client connected:
-  // - Use light sleep for first N cycles (maintain connectivity windows)
-  // - Then use deep sleep for power savings
-  // - Reset cycle counter
-  
-  if (sleep_cycle_count < LIGHT_SLEEP_CYCLES) {
-    // Light sleep phase - maintain BLE connectivity
-    uint32_t light_sleep_duration = min(sleep_duration_ms, 3000U); // Max 3s light sleep
-    Serial.printf("DEBUG: Hybrid cycle %d/%d - light sleep (%d ms) for connectivity\n", 
-                  sleep_cycle_count + 1, LIGHT_SLEEP_CYCLES, light_sleep_duration);
+    sd_app_evt_wait();
     
-    enterLightSleep(light_sleep_duration);
-    sleep_cycle_count++;
-    
-  } else {
-    // Deep sleep phase - maximum power savings
-    Serial.printf("DEBUG: Hybrid cycle %d - deep sleep for power savings\n", sleep_cycle_count + 1);
-    
-    sleep_cycle_count = 0; // Reset cycle counter
-    enterDeepSleep(); // This will reset the system on wake
-    // Note: Code after enterDeepSleep() never executes
+    // if our ISR fired...
+    if (wakeReason != NONE)          break;
+    // or if DIO1 lingers high...
+    if (digitalRead(LORA_DIO_1))     { wakeReason = RADIO;  break; }
+    // or if BUSY is asserted...
+    if (digitalRead(LORA_BUSY))      { wakeReason = BUSY;   break; }
+    // or if button pressed...
+    #ifdef BUTTON_PIN
+      if (digitalRead(BUTTON_PIN)==USER_BTN_PRESSED) { wakeReason = BUTTON; break; }
+    #endif
   }
-}
+  SimpleHardwareTimer::stop();
 
-// Enter deep sleep with 5-second light sleep (SoftDevice compatible)
-void NRFSleep::enterDeepSleep() {
-  Serial.println("DEBUG: Entering deep sleep - 5s light sleep with all wake sources");
-  
-  // Power down all T1000E peripherals for maximum power savings
-  powerDownPeripherals();
-  
-  // Turn off LED
-#ifdef LED_PIN
-  digitalWrite(LED_PIN, LOW);
-#endif
-  
-  uint32_t sleep_start = millis();
-  
-  // Use light sleep with 5-second timeout - compatible with SoftDevice
-  // This maintains interrupt capability and auto-wake timer
-  enterLightSleep(5000); // 5 seconds
-  
-  uint32_t actual_sleep_time = millis() - sleep_start;
-  
-  // Determine wake reason
-  const char* wake_reason = "timeout";
-  if (actual_sleep_time < 4500) { // Woke up early (before 4.5s)
-#ifdef BUTTON_PIN
-    if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
-#endif
-    // Check LoRa activity
-    if (digitalRead(LORA_DIO_1) == HIGH) {
-      wake_reason = "lora-dio1";
-      markLoraActivity(); // Update activity timestamp
+  // 9) Figure out what actually woke us
+  WakeReason reason = (wakeReason!=NONE ? wakeReason : TIMER);
+  const char* what =
+    reason==RADIO  ? "RADIO"  :
+    reason==BUSY   ? "BUSY"   :
+    reason==BUTTON ? "BUTTON" :
+    reason==BLE    ? "BLE"    : "TIMER";
+  Serial.printf("DEBUG: Woke: %s\n", what);
+
+  // 10) Reset back‑off on real activity and track radio wakes
+  if (reason==RADIO || reason==BUTTON || reason==BLE) {
+    backoffSleepMs = BASE_SLEEP_MS;
+    if (reason == RADIO) {
+      lastRadioWakeMs = millis();  // Update radio wake time
     }
-    if (digitalRead(LORA_BUSY) == HIGH) {
-      wake_reason = "lora-busy";
-      markLoraActivity(); // Update activity timestamp
-    }
-#ifdef PIN_BUZZER
-    if (rtttl::isPlaying()) wake_reason = "buzzer";
-#endif
-  }
-  
-  Serial.printf("DEBUG: Deep sleep wake reason: %s (slept %dms, peripherals powered down)\n", 
-                wake_reason, actual_sleep_time);
-  
-  // Reset cycle count after deep sleep
-  sleep_cycle_count = 0;
-}
-
-// Power down T1000E peripherals for deep sleep (like Meshtastic)
-void NRFSleep::powerDownPeripherals() {
-#ifdef GPS_VRTC_EN
-  digitalWrite(GPS_VRTC_EN, LOW);
-#endif
-#ifdef GPS_RESET
-  digitalWrite(GPS_RESET, LOW);
-#endif
-#ifdef GPS_SLEEP_INT
-  digitalWrite(GPS_SLEEP_INT, LOW);
-#endif
-#ifdef GPS_RTC_INT
-  digitalWrite(GPS_RTC_INT, LOW);
-#endif
-#ifdef GPS_RESETB
-  pinMode(GPS_RESETB, OUTPUT);
-  digitalWrite(GPS_RESETB, LOW);
-#endif
-
-#ifdef BUZZER_EN
-  digitalWrite(BUZZER_EN, LOW);
-#endif
-
-#ifdef PIN_3V3_EN
-  digitalWrite(PIN_3V3_EN, LOW);
-#endif
-
-  Serial.println("DEBUG: T1000E peripherals powered down for maximum power savings");
-}
-
-// Calculate maximum LoRa transaction time using actual radio configuration
-uint32_t NRFSleep::calculateMaxLoRaTransactionTime() {
-  // Use actual radio driver to get time-on-air for different packet sizes
-  // This uses the real configured SF, BW, CR instead of hardcoded assumptions
-  
-  // Fallback if no radio instance available
-  if (!radio_instance) {
-    Serial.println("DEBUG: No radio instance - using 5s delay");
-    return 5000; // Shorter, more reasonable fallback
-  }
-  
-  // Calculate for typical mesh packet sizes
-  uint32_t large_packet_time = radio_instance->getEstAirtimeFor(255);  // Max packet (255 bytes)
-  
-  // Simple calculation: max packet time + retries + safety margin
-  uint32_t total_time = (large_packet_time * 4) + 2000; // 4x for retries, +2s safety
-  
-  Serial.printf("DEBUG: Dynamic LoRa delay: %dms (based on %dms airtime)\n", 
-                total_time, large_packet_time);
-  
-  return total_time;
-}
-
-// Get dynamic LoRa sleep delay based on calculated transaction time
-uint32_t NRFSleep::getLoRaSleepDelayMs() {
-  static uint32_t cached_delay = 0;
-  static uint32_t last_calculation = 0;
-  
-  // Recalculate every 60 seconds or on first call
-  uint32_t now = millis();
-  if (cached_delay == 0 || (now - last_calculation) > 60000) {
-    cached_delay = calculateMaxLoRaTransactionTime();
-    last_calculation = now;
-  }
-  
-  return cached_delay;
-}
-
-// High-level sleep management - handles all sleep logic
-void NRFSleep::attemptSleep() {
-  // Skip sleep if buzzer is playing
-#ifdef PIN_BUZZER
-  if (rtttl::isPlaying()) {
-    return;
-  }
-#endif
-  
-  // Dynamic sleep duration based on BLE connection status
-  uint32_t sleep_duration_ms;
-#ifdef MAX_CONTACTS
-  if (Bluefruit.connected()) {
-    sleep_duration_ms = 1000;  // 1 second when BLE connected - high responsiveness
-  } else {
-    sleep_duration_ms = 10000; // 10 seconds when not connected - SoftDevice maintains BLE
-  }
-#else
-  sleep_duration_ms = 10000;   // Default 10 seconds if no BLE support
-#endif
-  
-  uint32_t sleep_start = millis();
-  
-  // Turn off LED before sleep to save power
-#ifdef LED_PIN
-  digitalWrite(LED_PIN, LOW);
-#endif
-  
-  // Hybrid sleep strategy - balances connectivity and power
-  bool ble_connected = false;
-#ifdef MAX_CONTACTS
-  ble_connected = Bluefruit.connected();
-#endif
-  
-  enterHybridSleep(sleep_duration_ms, ble_connected);
-  
-  // Only reached if light sleep was used (deep sleep resets system)
-  uint32_t actual_sleep_duration = millis() - sleep_start;
-  
-  // Determine wake reason for light sleep only
-  const char* wake_reason = "timeout";
-  if (actual_sleep_duration < (sleep_duration_ms - 500)) { // Woke up early
-#ifdef BUTTON_PIN
-    if (digitalRead(BUTTON_PIN) == HIGH) wake_reason = "button";
-#endif
-    // Check LoRa activity
-    if (digitalRead(LORA_DIO_1) == HIGH) {
-      wake_reason = "lora-dio1";
-      markLoraActivity(); // Update activity timestamp
-    }
-    if (digitalRead(LORA_BUSY) == HIGH) {
-      wake_reason = "lora-busy";
-      markLoraActivity(); // Update activity timestamp
-    }
-#ifdef PIN_BUZZER
-    if (rtttl::isPlaying()) wake_reason = "buzzer-started";
-#endif
-  }
-  Serial.printf("DEBUG: Hybrid sleep wake reason: %s\n", wake_reason);
-}
-
-// Complete sleep loop management for NRF boards
-void NRFSleep::manageSleepLoop() {
-  uint32_t now = millis();
-  
-  // Check for sleep every 6 seconds
-  if (now - NRFSleep::last_sleep_check > 6000) {
-    // Check if sleep should be delayed due to LoRa activity
-    if (shouldDelayForLora()) {
-      NRFSleep::last_sleep_check = now;  // Update timing but don't sleep
-      return;
-    }
-    
-    // Attempt to enter hybrid sleep
-    attemptSleep();
-    
-    // Update sleep check timing after successful sleep attempt
-    NRFSleep::last_sleep_check = now;
   }
 }
 
-#endif // NRF52_PLATFORM 
+#endif // NRF52_PLATFORM

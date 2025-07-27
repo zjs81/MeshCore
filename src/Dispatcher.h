@@ -61,6 +61,16 @@ public:
    */
   virtual void loop() { }
 
+  /**
+   * \brief  start the radio in receive mode to listen for incoming packets
+   */
+  virtual void startRecv() { }
+
+  /**
+   * \brief  put the radio in standby/idle mode for power savings
+   */
+  virtual void idle() { }
+
   virtual int getNoiseFloor() const { return 0; }
 
   virtual void triggerNoiseFloorCalibrate(int threshold) { }
@@ -76,6 +86,14 @@ public:
 
   virtual float getLastRSSI() const { return 0; }
   virtual float getLastSNR() const { return 0; }
+
+  // Hardware duty cycling methods for advanced radio chips (SX126x family)
+  virtual bool supportsHardwareDutyCycle() const { return false; }
+  virtual bool startReceiveDutyCycle(uint32_t rxPeriod, uint32_t sleepPeriod) { return false; }
+  virtual bool startChannelActivityDetection() { return false; }
+  virtual bool isChannelActivityDetected() { return false; }
+  virtual bool startPreambleDetection() { return false; }
+  virtual bool isPreambleDetected() { return false; }
 };
 
 /**
@@ -95,6 +113,7 @@ public:
   virtual Packet* removeOutboundByIdx(int i) = 0;
   virtual void queueInbound(Packet* packet, uint32_t scheduled_for) = 0;
   virtual Packet* getNextInbound(uint32_t now) = 0;
+  virtual int getInboundCount(uint32_t now) const = 0;
 };
 
 typedef uint32_t  DispatcherAction;
@@ -175,6 +194,10 @@ public:
     n_sent_flood = n_sent_direct = n_recv_flood = n_recv_direct = 0;
     _err_flags = 0;
   }
+
+  // Packet queue management
+  int getOutboundCount(uint32_t now) const { return _mgr->getOutboundCount(now); }
+  int getInboundCount(uint32_t now) const { return _mgr->getInboundCount(now); }
 
   // helper methods
   bool millisHasNowPassed(unsigned long timestamp) const;

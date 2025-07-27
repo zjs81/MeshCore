@@ -50,9 +50,14 @@ void WioTrackerL1Board::begin() {
   #endif
 
   delay(10);   // give sx1262 some time to power up
+
+#ifdef MAX_CONTACTS
+  // Initialize BLE callbacks for sleep management
+  Bluefruit.Periph.setConnectCallback(connect_callback);
+  Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
   
-  // Initialize NRF sleep management
-  NRFSleep::init();
+  Serial.println("DEBUG: BLE callbacks registered for sleep management");
+#endif
 }
 
 void WioTrackerL1Board::loop() {

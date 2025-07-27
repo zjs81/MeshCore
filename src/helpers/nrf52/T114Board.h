@@ -2,6 +2,7 @@
 
 #include <MeshCore.h>
 #include <Arduino.h>
+#include <helpers/NRFAdcCalibration.h>
 
 // LoRa radio module pins for Heltec T114
 #define  P_LORA_DIO_1     20
@@ -40,17 +41,23 @@ public:
 #endif
 
   uint16_t getBattMilliVolts() override {
-    int adcvalue = 0;
     analogReadResolution(12);
     analogReference(AR_INTERNAL_3_0);
     pinMode(PIN_BAT_CTL, OUTPUT);          // battery adc can be read only ctrl pin 6 set to high
     digitalWrite(PIN_BAT_CTL, 1);
 
     delay(10);
-    adcvalue = analogRead(PIN_VBAT_READ);
-    digitalWrite(6, 0);
+    
+    uint32_t raw = 0;
+    for (int i = 0; i < 8; i++) {
+      raw += analogRead(PIN_VBAT_READ);
+    }
+    raw = raw / 8;
+    
+    digitalWrite(PIN_BAT_CTL, 0);
 
-    return (uint16_t)((float)adcvalue * MV_LSB * 4.9);
+    // Use calibrated ADC conversion with board multiplier (4.9 from original MV_LSB calculation)
+    return NRFAdcCalibration::rawToMilliVolts(raw, 4.9f, 3.0f);
   }
 
   const char* getManufacturerName() const override {
