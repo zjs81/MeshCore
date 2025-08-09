@@ -88,6 +88,9 @@ public:
     #ifdef LED_PIN
     digitalWrite(LED_PIN, LOW);
     #endif
+
+    radio.sleep();
+
     #ifdef BUTTON_PIN
     nrf_gpio_cfg_sense_input(digitalPinToInterrupt(BUTTON_PIN), NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_SENSE_HIGH);
     #endif
