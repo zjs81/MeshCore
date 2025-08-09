@@ -72,6 +72,8 @@ bool radio_init() {
   radio.setRxBoostedGainMode(RX_BOOSTED_GAIN);
 #endif
 
+  radio.sleep();
+
   return true;  // success
 }
 
@@ -80,19 +82,29 @@ uint32_t radio_get_rng_seed() {
 }
 
 void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
+  radio.standby();
+  delayMicroseconds(100);
   radio.setFrequency(freq);
   radio.setSpreadingFactor(sf);
   radio.setBandwidth(bw);
   radio.setCodingRate(cr);
+  radio.sleep();
 }
 
 void radio_set_tx_power(uint8_t dbm) {
+  radio.standby();
+  delayMicroseconds(100);
   radio.setOutputPower(dbm);
+  radio.sleep();
 }
 
 mesh::LocalIdentity radio_new_identity() {
+  radio.standby();
+  delayMicroseconds(100);
   RadioNoiseListener rng(radio);
-  return mesh::LocalIdentity(&rng);  // create new random identity
+  mesh::LocalIdentity identity = mesh::LocalIdentity(&rng);  // create new random identity
+  radio.sleep();
+  return identity;
 }
 
 void T1000SensorManager::start_gps() {
