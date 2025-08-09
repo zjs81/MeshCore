@@ -23,7 +23,7 @@ void T1000eBoard::begin() {
 
   Wire.begin();
 
-  delay(10);   // give sx1262 some time to power up
+  delay(10);   // give LR11x0 some time to power up
 }
 
 #if 0
