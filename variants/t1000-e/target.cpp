@@ -58,6 +58,7 @@ bool radio_init() {
   if (status != RADIOLIB_ERR_NONE) {
     Serial.print("ERROR: radio init failed: ");
     Serial.println(status);
+    SPI.end();
     return false;  // fail
   }
   
