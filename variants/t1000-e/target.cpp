@@ -109,6 +109,7 @@ mesh::LocalIdentity radio_new_identity() {
 
 void T1000SensorManager::start_gps() {
   gps_active = true;
+  Serial1.begin(115200);
   //_nmea->begin();
   // this init sequence should be better 
   // comes from seeed examples and deals with all gps pins
@@ -145,6 +146,7 @@ void T1000SensorManager::sleep_gps() {
 
 void T1000SensorManager::stop_gps() {
   gps_active = false;
+  Serial1.end();
   digitalWrite(GPS_VRTC_EN, LOW);
   digitalWrite(GPS_EN, LOW);
   digitalWrite(GPS_RESET, HIGH);
@@ -157,9 +159,6 @@ void T1000SensorManager::stop_gps() {
 
 
 bool T1000SensorManager::begin() {
-  // init GPS
-  Serial1.begin(115200);
-
   // make sure gps pin are off
   digitalWrite(GPS_VRTC_EN, LOW);
   digitalWrite(GPS_RESET, LOW);
