@@ -742,6 +742,10 @@ void MyMesh::handleCmdFrame(size_t len) {
     StrHelper::strzcpy((char *)&out_frame[i], FIRMWARE_VERSION, 20);
     i += 20;
     _serial->writeFrame(out_frame, i);
+#if defined(NRF52_PLATFORM)
+    // BLE activity hint so inactivity timer doesn't stop ADV immediately after handshake
+    NRF_SLEEP::notifyBLEActivity();
+#endif
   } else if (cmd_frame[0] == CMD_APP_START &&
              len >= 8) { // sent when app establishes connection, respond with node ID
     //  cmd_frame[1..7]  reserved future

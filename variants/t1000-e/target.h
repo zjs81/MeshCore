@@ -35,6 +35,7 @@ public:
 #endif
 
 extern T1000eBoard board;
+extern RADIO_CLASS radio;
 extern WRAPPER_CLASS radio_driver;
 extern VolatileRTCClock rtc_clock;
 extern T1000SensorManager sensors;

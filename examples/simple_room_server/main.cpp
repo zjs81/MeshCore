@@ -16,6 +16,9 @@
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/TxtDataHelpers.h>
 #include <helpers/CommonCLI.h>
+#if defined(NRF52_PLATFORM)
+#include <helpers/nrf52/NRF_SLEEP.h>
+#endif
 #include <RTClib.h>
 #include <target.h>
 
@@ -1029,6 +1032,10 @@ void setup() {
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement(16000);
+  
+#if defined(NRF52_PLATFORM)
+  NRF_SLEEP::begin(NRF_SLEEP::Role::Repeater, /*bleIdleStopSecs=*/0, /*enableDcdc=*/true, /*disableUsbSerial=*/false);
+#endif
 }
 
 void loop() {
@@ -1058,4 +1065,7 @@ void loop() {
 
   the_mesh.loop();
   sensors.loop();
+#if defined(NRF52_PLATFORM)
+  NRF_SLEEP::loop();
+#endif
 }

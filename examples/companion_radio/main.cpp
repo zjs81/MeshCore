@@ -1,6 +1,9 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
 #include "MyMesh.h"
+#if defined(NRF52_PLATFORM)
+#include <helpers/nrf52/NRF_SLEEP.h>
+#endif
 
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
@@ -127,6 +130,13 @@ void setup() {
   serial_interface.begin(Serial);
 #endif
   the_mesh.startInterface(serial_interface);
+#if defined(NRF52_PLATFORM)
+  // Optimize BLE companion power: stop BLE advertising after 60s of inactivity,
+  // keep CPU in System ON idle via sd_app_evt_wait(). USB Serial remains active.
+  NRF_SLEEP::begin(NRF_SLEEP::Role::BLECompanion, /*bleIdleStopSecs=*/60, /*enableDcdc=*/true, /*disableUsbSerial=*/false);
+  // Make BLE available periodically: 30s ON / 30s OFF each minute
+  NRF_SLEEP::setBLEAdvertisingWindows(30000, 60000);
+#endif
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
   store.begin();
@@ -195,5 +205,8 @@ void loop() {
   sensors.loop();
 #ifdef DISPLAY_CLASS
   ui_task.loop();
+#endif
+#if defined(NRF52_PLATFORM)
+  NRF_SLEEP::loop();
 #endif
 }

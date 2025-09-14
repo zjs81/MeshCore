@@ -41,6 +41,9 @@
 #endif
 
 #include <helpers/BaseChatMesh.h>
+#if defined(NRF52_PLATFORM)
+#include <helpers/nrf52/NRF_SLEEP.h>
+#endif
 
 #define SEND_TIMEOUT_BASE_MILLIS          500
 #define FLOOD_SEND_TIMEOUT_FACTOR         16.0f
@@ -583,8 +586,17 @@ void setup() {
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvert(1200);   // add slight delay
+
+#if defined(NRF52_PLATFORM)
+  NRF_SLEEP::begin(NRF_SLEEP::Role::BLECompanion, /*bleIdleStopSecs=*/60, /*enableDcdc=*/true, /*disableUsbSerial=*/false);
+  // 30s ON / 30s OFF each minute
+  NRF_SLEEP::setBLEAdvertisingWindows(30000, 60000);
+#endif
 }
 
 void loop() {
   the_mesh.loop();
+#if defined(NRF52_PLATFORM)
+  NRF_SLEEP::loop();
+#endif
 }

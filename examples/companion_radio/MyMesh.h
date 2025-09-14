@@ -32,6 +32,9 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/BaseSerialInterface.h>
 #include <helpers/IdentityStore.h>
+#if defined(NRF52_PLATFORM)
+#include <helpers/nrf52/NRF_SLEEP.h>
+#endif
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <target.h>

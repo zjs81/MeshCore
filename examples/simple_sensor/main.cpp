@@ -1,4 +1,7 @@
 #include "SensorMesh.h"
+#if defined(NRF52_PLATFORM)
+#include <helpers/nrf52/NRF_SLEEP.h>
+#endif
 
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
@@ -112,6 +115,11 @@ void setup() {
 
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement(16000);
+
+#if defined(NRF52_PLATFORM)
+  // Default power optimization for nRF52. No BLE companion here, so use Repeater role.
+  NRF_SLEEP::begin(NRF_SLEEP::Role::Repeater, /*bleIdleStopSecs=*/0, /*enableDcdc=*/true, /*disableUsbSerial=*/false);
+#endif
 }
 
 void loop() {
@@ -143,5 +151,8 @@ void loop() {
   sensors.loop();
 #ifdef DISPLAY_CLASS
   ui_task.loop();
+#endif
+#if defined(NRF52_PLATFORM)
+  NRF_SLEEP::loop();
 #endif
 }
