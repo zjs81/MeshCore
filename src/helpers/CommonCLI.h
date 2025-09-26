@@ -70,4 +70,7 @@ public:
   void loadPrefs(FILESYSTEM* _fs);
   void savePrefs(FILESYSTEM* _fs);
   void handleCommand(uint32_t sender_timestamp, const char* command, char* reply);
+  
+private:
+  bool handleGetSetCommands(uint32_t sender_timestamp, const char* command, char* reply);
 };
