@@ -754,22 +754,27 @@ void UITask::loop() {
   if (millis() > next_batt_chck) {
     uint16_t milliVolts = getBattMilliVolts();
     if (milliVolts > 0 && milliVolts < AUTO_SHUTDOWN_MILLIVOLTS) {
+      low_voltage_count++;
+      
+      // Only shutdown after 10 consecutive low readings to avoid voltage bounce
+      if (low_voltage_count >= 10) {
+        // show low battery shutdown alert
+        // we should only do this for eink displays, which will persist after power loss
+        #if defined(THINKNODE_M1) || defined(LILYGO_TECHO)
+        if (_display != NULL) {
+          _display->startFrame();
+          _display->setTextSize(2);
+          _display->setColor(DisplayDriver::RED);
+          _display->drawTextCentered(_display->width() / 2, 20, "Low Battery.");
+          _display->drawTextCentered(_display->width() / 2, 40, "Shutting Down!");
+          _display->endFrame();
+        }
+        #endif
 
-      // show low battery shutdown alert
-      // we should only do this for eink displays, which will persist after power loss
-      #if defined(THINKNODE_M1) || defined(LILYGO_TECHO)
-      if (_display != NULL) {
-        _display->startFrame();
-        _display->setTextSize(2);
-        _display->setColor(DisplayDriver::RED);
-        _display->drawTextCentered(_display->width() / 2, 20, "Low Battery.");
-        _display->drawTextCentered(_display->width() / 2, 40, "Shutting Down!");
-        _display->endFrame();
+        shutdown();
       }
-      #endif
-
-      shutdown();
-
+    } else {
+\      low_voltage_count = 0;
     }
     next_batt_chck = millis() + 8000;
   }

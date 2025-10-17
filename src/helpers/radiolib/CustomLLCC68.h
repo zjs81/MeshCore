@@ -56,6 +56,12 @@ class CustomLLCC68 : public LLCC68 {
       }
     
       setCRC(1);
+      
+     
+      // RadioLib's begin() should auto enable this
+      forceLDRO(true);  // Let RadioLib auto mange LDRO based on SF and BW
+      setRegulatorMode(RADIOLIB_SX126X_REGULATOR_DC_DC);
+      setPaRampTime(RADIOLIB_SX126X_PA_RAMP_200U);
   
   #ifdef SX126X_CURRENT_LIMIT
       setCurrentLimit(SX126X_CURRENT_LIMIT);

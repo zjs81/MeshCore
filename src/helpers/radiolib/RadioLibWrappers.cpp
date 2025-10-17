@@ -34,6 +34,8 @@ void RadioLibWrapper::begin() {
 
   _noise_floor = 0;
   _threshold = 0;
+  _tx_start_time = 0;
+  _preamble_detected = false; 
 
   // start average out some samples
   _num_floor_samples = 0;
@@ -129,13 +131,43 @@ uint32_t RadioLibWrapper::getEstAirtimeFor(int len_bytes) {
 }
 
 bool RadioLibWrapper::startSendRaw(const uint8_t* bytes, int len) {
+  // Perform CAD before txing
+  #ifdef ENABLE_CAD
+  const int MAX_CAD_RETRIES = 3;
+  for (int retry = 0; retry < MAX_CAD_RETRIES; retry++) {
+    int16_t cad_result = _radio->scanChannel();
+    
+    if (cad_result == RADIOLIB_CHANNEL_FREE) {
+      // Channel is clear, proceed with transmission
+      MESH_DEBUG_PRINTLN("RadioLibWrapper: CAD - channel free, transmitting");
+      break;
+    } else if (cad_result == RADIOLIB_PREAMBLE_DETECTED) {
+      // Channel busy, backoff with random delay
+      uint32_t backoff_ms = 50 + (millis() % 100);  // random backoff
+      MESH_DEBUG_PRINTLN("RadioLibWrapper: CAD - channel busy, backoff %dms (retry %d/%d)", 
+                         backoff_ms, retry + 1, MAX_CAD_RETRIES);
+      delay(backoff_ms);
+      
+      if (retry == MAX_CAD_RETRIES - 1) {
+        MESH_DEBUG_PRINTLN("RadioLibWrapper: CAD - max retries, forcing TX");
+      }
+    } else {
+      // CAD error, proceed with transmission anyway
+      MESH_DEBUG_PRINTLN("RadioLibWrapper: CAD error (%d), proceeding", cad_result);
+      break;
+    }
+  }
+  #endif
+  
   _board->onBeforeTransmit();
+  _tx_start_time = millis();  
   int err = _radio->startTransmit((uint8_t *) bytes, len);
   if (err == RADIOLIB_ERR_NONE) {
     state = STATE_TX_WAIT;
     return true;
   }
   MESH_DEBUG_PRINTLN("RadioLibWrapper: error: startTransmit(%d)", err);
+  _board->onAfterTransmit();  
   idle();   // trigger another startRecv()
   return false;
 }
@@ -146,6 +178,16 @@ bool RadioLibWrapper::isSendComplete() {
     n_sent++;
     return true;
   }
+  
+  // This prevents the radio from getting stuck in TX mode with red LED on
+  if (state == STATE_TX_WAIT && _tx_start_time > 0 && (millis() - _tx_start_time) > 20000) {
+    MESH_DEBUG_PRINTLN("RadioLibWrapper: TX timeout after 10s, forcing completion");
+    state = STATE_IDLE;
+    _board->onAfterTransmit();  // Ensure LED is turned off
+    idle();  
+    return true; 
+  }
+  
   return false;
 }
 

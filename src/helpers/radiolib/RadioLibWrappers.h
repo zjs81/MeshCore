@@ -11,7 +11,8 @@ protected:
   int16_t _noise_floor, _threshold;
   uint16_t _num_floor_samples;
   int32_t _floor_sample_sum;
-
+  unsigned long _tx_start_time;  
+  volatile bool _preamble_detected; 
   void idle();
   void startRecv();
   float packetScoreInt(float snr, int sf, int packet_len);

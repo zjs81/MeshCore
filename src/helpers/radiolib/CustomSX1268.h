@@ -56,6 +56,10 @@ class CustomSX1268 : public SX1268 {
       }
     
       setCRC(1);
+      
+      forceLDRO(true);  // Let RadioLib auto manage LDRO based on SF and BW
+      setRegulatorMode(RADIOLIB_SX126X_REGULATOR_DC_DC);
+      setPaRampTime(RADIOLIB_SX126X_PA_RAMP_200U);
   
   #ifdef SX126X_CURRENT_LIMIT
       setCurrentLimit(SX126X_CURRENT_LIMIT);

@@ -1,4 +1,5 @@
 #include "SerialBLEInterface.h"
+#include <esp_wifi.h>
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -11,7 +12,9 @@
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   _pin_code = pin_code;
-
+// This is more of a test to see if we can save power by stopping WiFi
+  esp_wifi_stop();
+  
   // Create the BLE Device
   BLEDevice::init(device_name);
   BLEDevice::setSecurityCallbacks(this);
