@@ -7,18 +7,23 @@
 #define BLE_TX_POWER 4
 #endif
 
+#ifndef BLE_CONNECTION_TIMEOUT_MS
+#define BLE_CONNECTION_TIMEOUT_MS 1800000  // 30 minutes of inactivity before considering connection dead
+#endif
+
 class SerialBLEInterface : public BaseSerialInterface {
   BLEUart bleuart;
   bool _isEnabled;
   bool _isDeviceConnected;
   unsigned long _last_write;
+  unsigned long _last_activity;  // Track last BLE activity to detect dead connections
 
   struct Frame {
     uint8_t len;
     uint8_t buf[MAX_FRAME_SIZE];
   };
 
-  #define FRAME_QUEUE_SIZE  4
+  #define FRAME_QUEUE_SIZE  16  // Increased from 4 to handle burst transfers better
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
 
@@ -32,6 +37,7 @@ public:
     _isEnabled = false;
     _isDeviceConnected = false;
     _last_write = 0;
+    _last_activity = 0;
     send_queue_len = 0;
   }
 

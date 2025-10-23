@@ -118,6 +118,7 @@ int Utils::encrypt(const uint8_t* shared_secret, uint8_t* dest, const uint8_t* s
   
   mbedtls_aes_free(&aes);
   return dp - dest;  
+#else
   // Software fallback
   AES128 aes;
   uint8_t* dp = dest;
@@ -147,6 +148,7 @@ int Utils::encryptThenMAC(const uint8_t* shared_secret, uint8_t* dest, const uin
   mbedtls_md_context_t ctx;
   mbedtls_md_init(&ctx);
   mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 1);  
+  mbedtls_md_hmac_starts(&ctx, shared_secret, PUB_KEY_SIZE);  // Initialize HMAC with key
   mbedtls_md_hmac_update(&ctx, dest + CIPHER_MAC_SIZE, enc_len);
   mbedtls_md_hmac_finish(&ctx, full_hmac);
   mbedtls_md_free(&ctx);

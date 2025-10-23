@@ -210,7 +210,7 @@ private:
     uint32_t ack;
     ContactInfo* contact;
   };
-  #define EXPECTED_ACK_TABLE_SIZE 8
+  #define EXPECTED_ACK_TABLE_SIZE 16  // Increased from 8 to 16 to handle more pending ACKs at long distances
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 

@@ -774,7 +774,7 @@ void UITask::loop() {
         shutdown();
       }
     } else {
-\      low_voltage_count = 0;
+      low_voltage_count = 0;
     }
     next_batt_chck = millis() + 8000;
   }

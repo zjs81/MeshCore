@@ -70,6 +70,7 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
   if (cmpl.success) {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Success");
     deviceConnected = true;
+    _last_activity = millis();  // Reset activity timer on new connection
   } else {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Failure*");
 
@@ -96,6 +97,7 @@ void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param
 void SerialBLEInterface::onDisconnect(BLEServer* pServer) {
   BLE_DEBUG_PRINTLN("onDisconnect()");
   if (_isEnabled) {
+    _last_activity = 0;
     adv_restart_time = millis() + ADVERT_RESTART_DELAY;
 
     // loop() will detect this on next loop, and set deviceConnected to false
@@ -125,6 +127,7 @@ void SerialBLEInterface::enable() {
   if (_isEnabled) return;
 
   _isEnabled = true;
+  _last_activity = 0;  // Reset activity timer
   clearBuffers();
 
   // Start the service
@@ -172,17 +175,35 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   return 0;
 }
 
-#define  BLE_WRITE_MIN_INTERVAL   60
+#define  BLE_WRITE_MIN_INTERVAL   10  // Reduced from 60ms - modern BLE stacks can handle much faster throughput
+
+#ifndef BLE_CONNECTION_TIMEOUT_MS
+#define BLE_CONNECTION_TIMEOUT_MS 1800000  // 30 minutes of inactivity before considering connection dead
+#endif
 
 bool SerialBLEInterface::isWriteBusy() const {
   return millis() < _last_write + BLE_WRITE_MIN_INTERVAL;   // still too soon to start another write?
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  // Check for connection timeout (iOS app suspended, etc.)
+  if (deviceConnected && _last_activity > 0) {
+    if (millis() - _last_activity > BLE_CONNECTION_TIMEOUT_MS) {
+      BLE_DEBUG_PRINTLN("BLE connection timeout detected, forcing disconnect");
+      // Force disconnect the stale connection
+      pServer->disconnect(last_conn_id);
+      deviceConnected = false;
+      _last_activity = 0;
+      adv_restart_time = millis() + ADVERT_RESTART_DELAY;
+      return 0;
+    }
+  }
+
   if (send_queue_len > 0   // first, check send queue
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
   ) {
     _last_write = millis();
+    _last_activity = millis();  // Update activity timer on send
     pTxCharacteristic->setValue(send_queue[0].buf, send_queue[0].len);
     pTxCharacteristic->notify();
 
@@ -195,6 +216,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   }
 
   if (recv_queue_len > 0) {   // check recv queue
+    _last_activity = millis();  // Update activity timer on receive
     size_t len = recv_queue[0].len;   // take from top of queue
     memcpy(dest, recv_queue[0].buf, len);
 

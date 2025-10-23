@@ -80,7 +80,7 @@
 #define FLOOD_SEND_TIMEOUT_FACTOR       16.0f
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
-#define LAZY_CONTACTS_WRITE_DELAY       5000
+#define LAZY_CONTACTS_WRITE_DELAY       15000  // 15 seconds - reduced flash wear, better debouncing
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -316,7 +316,7 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
-    if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
+    if (expected_ack_table[i].ack != 0 && memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
       out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
       memcpy(&out_frame[1], data, 4);
       uint32_t trip_time = _ms->getMillis() - expected_ack_table[i].msg_sent;
@@ -328,7 +328,25 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
       return expected_ack_table[i].contact;
     }
   }
-  return checkConnectionsAck(data);
+  
+  // Check if it's a connection ACK
+  ContactInfo* conn_contact = checkConnectionsAck(data);
+  if (conn_contact) {
+    return conn_contact;
+  }
+  
+  // ACK arrived but not in table (late arrival or duplicate after timeout)
+  // Still notify the app so user knows the message was delivered
+  if (_serial->isConnected()) {
+    out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
+    memcpy(&out_frame[1], data, 4);
+    uint32_t trip_time = 0xFFFFFFFF;  // Special value indicating "late/unknown arrival time"
+    memcpy(&out_frame[5], &trip_time, 4);
+    _serial->writeFrame(out_frame, 9);
+    MESH_DEBUG_PRINTLN("Late ACK received (not in table): %08X", *(uint32_t*)data);
+  }
+  
+  return NULL;
 }
 
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
@@ -644,9 +662,11 @@ uint32_t MyMesh::calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const {
   return SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * pkt_airtime_millis);
 }
 uint32_t MyMesh::calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const {
-  return SEND_TIMEOUT_BASE_MILLIS +
+  // Calculate timeout for ROUND-TRIP (message goes out + ACK comes back = 2x the hops)
+  uint32_t one_way = SEND_TIMEOUT_BASE_MILLIS +
          ((pkt_airtime_millis * DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) *
           (path_len + 1));
+  return one_way * 2;  // Double for round-trip
 }
 
 void MyMesh::onSendTimeout() {}
@@ -656,7 +676,7 @@ int MyMesh::getAGCResetInterval() const {
 }
 
 MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui)
-    : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
+    : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(32), tables),  // Increased from 16 to 32 for long-distance hops
       _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui) {
   _iter_started = false;
   _cli_rescue = false;

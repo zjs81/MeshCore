@@ -2,6 +2,10 @@
 #include <Mesh.h>
 #include "MyMesh.h"
 
+#ifdef NRF52_PLATFORM
+  #include <helpers/nrf52/WatchdogHelper.h>
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -219,9 +223,21 @@ void setup() {
 #ifdef DISPLAY_CLASS
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
 #endif
+
+#ifdef NRF52_PLATFORM
+  // Enable watchdog timer to auto-recover from any system hangs
+  // 30 second timeout - if loop() doesn't complete in 30s, device will auto-reset
+  WatchdogHelper::begin(30000);
+#endif
 }
 
 void loop() {
+#ifdef NRF52_PLATFORM
+  // Feed watchdog at start of each loop iteration
+  // This prevents auto-reset as long as the loop is executing
+  WatchdogHelper::feed();
+#endif
+
   the_mesh.loop();
   sensors.loop();
 #ifdef DISPLAY_CLASS

@@ -1,6 +1,10 @@
 #include <Arduino.h>
 #include "DataStore.h"
 
+#ifdef NRF52_PLATFORM
+  #include <helpers/nrf52/WatchdogHelper.h>
+#endif
+
 #if defined(EXTRAFS) || defined(QSPIFLASH)
   #define MAX_BLOBRECS 100
 #else
@@ -310,6 +314,13 @@ void DataStore::saveContacts(DataStoreHost* host) {
     uint8_t unused = 0;
 
     while (host->getContactForSave(idx, c)) {
+      // Feed watchdog every 10 contacts to prevent timeout during large saves
+      #ifdef NRF52_PLATFORM
+      if (idx % 10 == 0) {
+        WatchdogHelper::feed();
+      }
+      #endif
+      
       bool success = (file.write(c.id.pub_key, 32) == 32);
       success = success && (file.write((uint8_t *)&c.name, 32) == 32);
       success = success && (file.write(&c.type, 1) == 1);

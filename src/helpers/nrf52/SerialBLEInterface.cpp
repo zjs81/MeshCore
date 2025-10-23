@@ -1,6 +1,13 @@
 #include "SerialBLEInterface.h"
+#include "WatchdogHelper.h"
 
 static SerialBLEInterface* instance;
+
+// WatchdogHelper static member definitions
+#ifdef NRF52_PLATFORM
+bool WatchdogHelper::_enabled = false;
+uint32_t WatchdogHelper::_timeout_ms = 30000;
+#endif
 
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected");
@@ -11,6 +18,7 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
   if(instance){
     instance->_isDeviceConnected = false;
+    instance->_last_activity = 0;
     instance->startAdv();
   }
 }
@@ -19,6 +27,7 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
   if(instance){
     instance->_isDeviceConnected = true;
+    instance->_last_activity = millis();  // Reset activity timer on new connection
     // no need to stop advertising on connect, as the ble stack does this automatically
   }
 }
@@ -112,6 +121,7 @@ void SerialBLEInterface::enable() {
   if (_isEnabled) return;
 
   _isEnabled = true;
+  _last_activity = 0;  // Reset activity timer
   clearBuffers();
 
   // Start advertising
@@ -159,17 +169,38 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   return 0;
 }
 
-#define  BLE_WRITE_MIN_INTERVAL   60
+#define  BLE_WRITE_MIN_INTERVAL   10  // Reduced from 60ms - modern BLE stacks can handle much faster throughput
 
 bool SerialBLEInterface::isWriteBusy() const {
   return millis() < _last_write + BLE_WRITE_MIN_INTERVAL;   // still too soon to start another write?
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  // Check for connection timeout (iOS app suspended, etc.)
+  if (_isDeviceConnected && _last_activity > 0) {
+    if (millis() - _last_activity > BLE_CONNECTION_TIMEOUT_MS) {
+      BLE_DEBUG_PRINTLN("BLE connection timeout detected, forcing disconnect");
+      // Force disconnect the stale connection
+      #ifdef RAK_BOARD
+        Bluefruit.disconnect(Bluefruit.connHandle());
+      #else
+        uint16_t conn_id;
+        if (Bluefruit.getConnectedHandles(&conn_id, 1) > 0) {
+          Bluefruit.disconnect(conn_id);
+        }
+      #endif
+      _isDeviceConnected = false;
+      _last_activity = 0;
+      startAdv();
+      return 0;
+    }
+  }
+
   if (send_queue_len > 0   // first, check send queue
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
   ) {
     _last_write = millis();
+    _last_activity = millis();  // Update activity timer on send
     bleuart.write(send_queue[0].buf, send_queue[0].len);
     BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
 
@@ -180,9 +211,17 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   } else {
     int len = bleuart.available();
     if (len > 0) {
-      bleuart.readBytes(dest, len);
-      BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
-      return len;
+      _last_activity = millis();  // Update activity timer on receive
+      // Use read() in a loop instead of readBytes() to avoid potential blocking
+      int bytes_read = 0;
+      while (bleuart.available() && bytes_read < len && bytes_read < MAX_FRAME_SIZE) {
+        dest[bytes_read] = bleuart.read();
+        bytes_read++;
+      }
+      if (bytes_read > 0) {
+        BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", bytes_read, (uint32_t) dest[0]);
+        return bytes_read;
+      }
     }
   }
   return 0;
